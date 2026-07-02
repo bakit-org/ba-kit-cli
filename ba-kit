@@ -35,7 +35,7 @@ main() {
     *)
       # Forward to framework ba-kit for all BA operations
       local framework_bin=""
-      for candidate in "$HOME/.local/bin/ba-kit" "$HOME/.claude/ba-kit/scripts/ba-kit"; do
+      for candidate in "$HOME/.claude/ba-kit/ba-kit" "$HOME/.local/bin/ba-kit" "$HOME/.claude/ba-kit/scripts/ba-kit"; do
         if [ -x "$candidate" ] && [ "$(realpath "$candidate" 2>/dev/null || echo "$candidate")" != "$(realpath "$0" 2>/dev/null || echo "$0")" ]; then
           framework_bin="$candidate"
           break
@@ -470,11 +470,12 @@ post_install() {
     cp "$EXTRACT_DIR/.local/bin/ba-kit" "$INSTALL_DIR/ba-kit/ba-kit"
     chmod +x "$INSTALL_DIR/ba-kit/ba-kit"
 
-    # Overwrite .local/bin/ba-kit with framework binary — whatever was
-    # there before (npm symlink, stale framework) gets replaced.
-    mkdir -p "$BIN_DIR"
-    cp "$EXTRACT_DIR/.local/bin/ba-kit" "$BIN_DIR/ba-kit"
-    chmod +x "$BIN_DIR/ba-kit"
+    # Remove stale framework binary at ~/.local/bin/ba-kit so it no longer
+    # shadows the npm-installed CLI wrapper in PATH.
+    if [ -f "$BIN_DIR/ba-kit" ] && ! [ -L "$BIN_DIR/ba-kit" ]; then
+      rm -f "$BIN_DIR/ba-kit"
+      echo "  Removed stale framework binary at ${BIN_DIR}/ba-kit (was shadowing npm CLI)"
+    fi
   fi
 
   register_hooks
