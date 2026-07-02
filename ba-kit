@@ -33,12 +33,18 @@ main() {
       usage
       ;;
     *)
-      # Forward unknown commands to the framework ba-kit if installed
-      local framework_bin="$HOME/.local/bin/ba-kit"
-      if [ -x "$framework_bin" ] && [ "$framework_bin" != "$0" ]; then
+      # Forward to framework ba-kit for all BA operations
+      local framework_bin=""
+      for candidate in "$HOME/.local/bin/ba-kit" "$HOME/.claude/ba-kit/scripts/ba-kit"; do
+        if [ -x "$candidate" ] && [ "$(realpath "$candidate" 2>/dev/null || echo "$candidate")" != "$(realpath "$0" 2>/dev/null || echo "$0")" ]; then
+          framework_bin="$candidate"
+          break
+        fi
+      done
+      if [ -n "$framework_bin" ]; then
         exec "$framework_bin" "$@"
       fi
-      echo "BA-kit CLI — AI-powered Business Analyst toolkit for Claude Code"
+      echo "BA-kit CLI — chưa cài framework. Chạy: ba-kit install"
       echo ""
       echo "Commands:"
       echo "  ba-kit install              Cài đặt BA-kit lần đầu"
@@ -479,7 +485,7 @@ register_hooks() {
   echo "  Đang đăng ký hooks..."
 
   if [ ! -f "$settings" ]; then
-    echo '{"hooks": {}}' > "$settings"
+    echo '{}' > "$settings"
   fi
 
   python3 -c "
@@ -494,46 +500,91 @@ with open(settings_path) as f:
 if 'hooks' not in settings:
     settings['hooks'] = {}
 
+hooks_obj = settings['hooks']
 hook_count = 0
+
+# Clean old top-level hook entries left by buggy register_hooks
+valid_events = {'SessionStart', 'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop'}
+for key in list(hooks_obj.keys()):
+    if key not in valid_events:
+        del hooks_obj[key]
+
+# Clean stale hooks whose files no longer exist
+for event in valid_events:
+    if event not in hooks_obj or not isinstance(hooks_obj[event], list):
+        continue
+    cleaned = []
+    for entry in hooks_obj[event]:
+        if not isinstance(entry, dict):
+            continue
+        valid_entry = False
+        for h in entry.get('hooks', []):
+            cmd = h.get('command', '')
+            # Extract file path from bash ".../path"
+            import re
+            m = re.search(r'bash\s+"([^"]+)"', cmd)
+            if m and os.path.isfile(m.group(1)):
+                valid_entry = True
+                break
+        if valid_entry:
+            cleaned.append(entry)
+    hooks_obj[event] = cleaned
+
 for hook_file in sorted(os.listdir(hooks_dir)):
     if not hook_file.endswith('.sh'):
         continue
     hook_name = hook_file.replace('.sh', '')
     hook_path = os.path.join(hooks_dir, hook_file)
 
-    if 'preflight' in hook_name and 'guard' not in hook_name:
-        event = 'UserPromptSubmit'
-        matcher = ''
+    # Map hook name → event + matcher
+    if 'preflight' in hook_name and 'context' not in hook_name:
+        event, matcher = 'UserPromptSubmit', ''
     elif 'audit' in hook_name and 'context-audit' in hook_name:
-        event = 'Stop'
-        matcher = ''
+        event, matcher = 'Stop', ''
     elif 'context-preflight' in hook_name or 'preflight-guard' in hook_name:
-        event = 'PreToolUse'
-        matcher = 'Read|Glob'
+        event, matcher = 'PreToolUse', 'Read|Glob'
     elif 'context-output' in hook_name or 'output-guard' in hook_name:
-        event = 'PostToolUse'
-        matcher = 'Bash|Read|Grep|Glob'
+        event, matcher = 'PostToolUse', 'Bash|Read|Grep|Glob'
     elif 'write-scope' in hook_name:
-        event = 'PreToolUse'
-        matcher = 'Write|Edit'
+        event, matcher = 'PreToolUse', 'Write|Edit'
     elif 'postwrite' in hook_name:
-        event = 'PostToolUse'
-        matcher = 'Write|Edit'
+        event, matcher = 'PostToolUse', 'Write|Edit'
     elif 'index-validation' in hook_name:
-        event = 'PostToolUse'
-        matcher = 'Write|Edit'
+        event, matcher = 'PostToolUse', 'Write|Edit'
     else:
         continue
 
-    settings['hooks'][hook_name] = {
-        'type': 'command',
-        'command': f'bash \"{hook_path}\"',
-        'matcher': matcher
+    # Get or create event array
+    if event not in hooks_obj:
+        hooks_obj[event] = []
+    if not isinstance(hooks_obj[event], list):
+        hooks_obj[event] = []
+
+    # Build hook entry
+    entry = {
+        'matcher': matcher,
+        'hooks': [{
+            'type': 'command',
+            'command': f'bash \"{hook_path}\"'
+        }]
     }
+
+    # Check if already registered (avoid duplicates)
+    already_registered = False
+    for existing in hooks_obj[event]:
+        for h in existing.get('hooks', []):
+            if hook_name in h.get('command', ''):
+                already_registered = True
+                break
+    if already_registered:
+        continue
+
+    hooks_obj[event].append(entry)
     hook_count += 1
 
 with open(settings_path, 'w') as f:
-    json.dump(settings, f, indent=2)
+    json.dump(settings, f, indent=2, ensure_ascii=False)
+    f.write('\n')
 
 print(f'  Registered {hook_count} hooks')
 " 2>/dev/null || echo "  Warning: Không thể đăng ký hooks (cần python3)"
