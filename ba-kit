@@ -796,7 +796,7 @@ cmd_uninstall() {
   echo "Đã gỡ cài đặt BA-kit."
   echo "Backup tại: ${backup_path}"
   echo ""
-  echo "Để cài lại: npm install -g @bakit/cli && ba-kit install"
+  echo "Để cài lại: npm install -g @bakit-org/cli && ba-kit install"
 }
 
 # ============================================================

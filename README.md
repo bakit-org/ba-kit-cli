@@ -5,13 +5,13 @@ AI-powered Business Analyst toolkit for Claude Code.
 ## Install
 
 ```bash
-npm install -g @bakit/cli
+npm install -g @bakit-org/cli
 ```
 
 Or try without installing:
 
 ```bash
-npx @bakit/cli doctor
+npx @bakit-org/cli doctor
 ```
 
 ## Usage
@@ -40,6 +40,6 @@ https://polar.sh/bakit-org/products/ba-kit
 2. Accept GitHub invite (check email)
 3. Install GitHub CLI: `brew install gh`
 4. Login: `gh auth login`
-5. Install CLI: `npm install -g @bakit/cli`
+5. Install CLI: `npm install -g @bakit-org/cli`
 6. Install BA-kit content: `ba-kit install`
 7. Start using: `/ba-start` in Claude Code

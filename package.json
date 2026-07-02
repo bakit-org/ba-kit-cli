@@ -1,5 +1,5 @@
 {
-  "name": "@bakit/cli",
+  "name": "@bakit-org/cli",
   "version": "1.0.0",
   "description": "BA-kit CLI — AI-powered Business Analyst toolkit for Claude Code",
   "bin": {
