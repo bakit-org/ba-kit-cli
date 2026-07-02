@@ -599,6 +599,55 @@ print(f"  Registered {hook_count} hooks")
 PYEOF
 }
 
+# Remove stale ba-kit hook entries from settings.json — called during uninstall
+clean_hooks_json() {
+  local settings="$HOME/.claude/settings.json"
+  [ ! -f "$settings" ] && return
+
+  python3 << 'PYEOF'
+import json, os, re
+
+settings_path = "$settings"
+
+with open(settings_path) as f:
+    settings = json.load(f)
+
+if "hooks" not in settings:
+    exit(0)
+
+hooks_obj = settings["hooks"]
+valid_events = {"SessionStart", "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"}
+removed = 0
+
+for event in valid_events:
+    if event not in hooks_obj or not isinstance(hooks_obj[event], list):
+        continue
+    cleaned = []
+    for entry in hooks_obj[event]:
+        if not isinstance(entry, dict):
+            continue
+        ok = False
+        for h in entry.get("hooks", []):
+            cmd = h.get("command", "")
+            m = re.search(r'bash "([^"]+)"', cmd)
+            if m and os.path.isfile(m.group(1)):
+                ok = True
+                break
+        if ok:
+            cleaned.append(entry)
+        else:
+            removed += 1
+    hooks_obj[event] = cleaned
+
+with open(settings_path, "w") as f:
+    json.dump(settings, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+
+if removed > 0:
+    print(f"  Dọn dẹp {removed} stale hook entries")
+PYEOF
+}
+
 
 # ============================================================
 # B10: LƯU VERSION + PRODUCT + MANIFEST
@@ -957,6 +1006,8 @@ cmd_uninstall() {
   rm -f "$INSTALL_DIR/hooks"/guardrail-*.sh 2>/dev/null || true
   rm -f "$INSTALL_DIR/hooks"/postwrite-guardrail.sh 2>/dev/null || true
   rm -f "$BIN_DIR/ba-kit" 2>/dev/null || true
+
+  clean_hooks_json
 
   echo "Đã gỡ cài đặt ${product_name}."
   echo "Backup tại: ${backup_path}"
