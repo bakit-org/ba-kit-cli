@@ -26,7 +26,7 @@ ba-kit uninstall  # Uninstall (with backup)
 
 ## Purchase
 
-https://polar.sh/bakit-org/products/ba-kit
+https://polar.sh/checkout/polar_c_Bd8xfL8VTBQtYpol2MdbS2M5acEFMsjKmDFec0bYVGF
 
 ## Prerequisites
 
@@ -36,7 +36,7 @@ https://polar.sh/bakit-org/products/ba-kit
 
 ## Quick Start
 
-1. Buy BA-kit on [Polar.sh](https://polar.sh/bakit-org/products/ba-kit)
+1. Buy BA-kit on [Polar.sh](https://polar.sh/checkout/polar_c_Bd8xfL8VTBQtYpol2MdbS2M5acEFMsjKmDFec0bYVGF)
 2. Accept GitHub invite (check email)
 3. Install GitHub CLI: `brew install gh`
 4. Login: `gh auth login`

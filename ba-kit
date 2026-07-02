@@ -35,7 +35,7 @@ main() {
       echo "  ba-kit version              Hiển thị phiên bản đã cài"
       echo "  ba-kit uninstall            Gỡ cài đặt (có backup)"
       echo ""
-      echo "Mua BA-kit: https://polar.sh/bakit-org/products/ba-kit"
+      echo "Mua BA-kit: https://polar.sh/checkout/polar_c_Bd8xfL8VTBQtYpol2MdbS2M5acEFMsjKmDFec0bYVGF"
       ;;
   esac
 }
@@ -51,7 +51,7 @@ usage() {
   echo "  ba-kit version              Hiển thị phiên bản đã cài"
   echo "  ba-kit uninstall            Gỡ cài đặt (có backup)"
   echo ""
-  echo "Mua BA-kit: https://polar.sh/bakit-org/products/ba-kit"
+  echo "Mua BA-kit: https://polar.sh/checkout/polar_c_Bd8xfL8VTBQtYpol2MdbS2M5acEFMsjKmDFec0bYVGF"
 }
 
 # ============================================================
@@ -129,7 +129,7 @@ check_access() {
   echo "  2. Bạn đã mua nhưng chưa accept GitHub invite"
   echo ""
   echo "Cách khắc phục:"
-  echo "  - Chưa mua:  vào https://polar.sh/bakit-org/products/ba-kit để mua"
+  echo "  - Chưa mua:  vào https://polar.sh/checkout/polar_c_Bd8xfL8VTBQtYpol2MdbS2M5acEFMsjKmDFec0bYVGF để mua"
   echo "  - Đã mua:    kiểm tra email (cả spam) tìm \"invited you to bakit-org/bakit\""
   echo "               Click \"Accept invitation\" trong email"
   echo "  - Đã accept: chạy 'gh auth login' để đăng nhập lại"
@@ -697,7 +697,7 @@ cmd_doctor() {
     echo "[OK]   Repo access: có quyền truy cập BA-kit"
   else
     echo "[THIẾU] Repo access: KHÔNG có quyền truy cập BA-kit"
-    echo "        Mua: https://polar.sh/bakit-org/products/ba-kit"
+    echo "        Mua: https://polar.sh/checkout/polar_c_Bd8xfL8VTBQtYpol2MdbS2M5acEFMsjKmDFec0bYVGF"
     echo "        Hoặc kiểm tra email GitHub invite"
   fi
 
