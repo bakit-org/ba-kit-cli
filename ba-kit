@@ -29,6 +29,15 @@ PRODUCT_URLS=(
 # === ENTRY POINT ===
 # ponytail: portable lowercase — macOS bash 3.2 doesn't support ${var,,}
 lowercase() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# ponytail: portable sha256 — stock macOS has no sha256sum, only shasum -a 256
+sha256() {
+  if command -v sha256sum &>/dev/null; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
 main() {
   case "${1:-}" in
     install)   shift; cmd_install "$@" ;;
@@ -326,7 +335,7 @@ download_release() {
 
     local expected actual
     expected=$(cut -d' ' -f1 "$checksum_file")
-    actual=$(sha256sum "$ARCHIVE_FILE" | cut -d' ' -f1)
+    actual=$(sha256 "$ARCHIVE_FILE")
 
     if [ "$expected" != "$actual" ]; then
       echo "Lỗi: File tải về bị lỗi (checksum không khớp)."
@@ -374,7 +383,7 @@ prune_backups() {
     local deleted=0
     while IFS= read -r -d '' dir; do
       rm -rf "$dir"
-      ((deleted++))
+      deleted=$((deleted + 1))
     done < <(ls -1dt "$BACKUP_DIR"/*/ 2>/dev/null | tail -n +$((keep + 1)) | tr '\n' '\0')
     echo "  Đã dọn ${deleted} backup cũ (giữ ${keep} gần nhất)."
   fi
@@ -426,31 +435,31 @@ merge_files() {
     if [ ! -f "$dest_file" ]; then
       mkdir -p "$(dirname "$dest_file")"
       cp "$src_file" "$dest_file"
-      ((created++))
+      created=$((created + 1))
       continue
     fi
 
     if $force; then
       cp "$src_file" "$dest_file"
-      ((updated++))
+      updated=$((updated + 1))
       continue
     fi
 
     if is_protected "$rel_path"; then
-      ((preserved++))
+      preserved=$((preserved + 1))
       continue
     fi
 
     local old_hash new_hash current_hash
     old_hash=$(echo "$old_manifest" | jq -r ".\"$rel_path\" // empty" 2>/dev/null)
-    new_hash=$(sha256sum "$src_file" | cut -d' ' -f1)
-    current_hash=$(sha256sum "$dest_file" | cut -d' ' -f1)
+    new_hash=$(sha256 "$src_file")
+    current_hash=$(sha256 "$dest_file")
 
     if [ "$old_hash" = "$current_hash" ] || [ "$new_hash" = "$current_hash" ]; then
       cp "$src_file" "$dest_file"
-      ((updated++))
+      updated=$((updated + 1))
     else
-      ((preserved++))
+      preserved=$((preserved + 1))
     fi
   done < <(find "$src" -print0)
 
@@ -1027,10 +1036,14 @@ cmd_uninstall() {
   done
 
   rm -rf "$INSTALL_DIR/agents" 2>/dev/null || true
-  rm -rf "$INSTALL_DIR/rules/ba-kit" 2>/dev/null || true
+  for rule_file in ba-quality-standards.md ba-workflow.md brainstorm-approval-gate.md \
+              brainstorm-changelog.md brainstorm-conventions.md brainstorm-keyword-detection.md \
+              brainstorm-naming-conventions.md brainstorm-resolve-oqs.md; do
+    rm -f "$INSTALL_DIR/rules/$rule_file" 2>/dev/null || true
+  done
   rm -rf "$INSTALL_DIR/templates" 2>/dev/null || true
   rm -rf "$INSTALL_DIR/ba-kit" 2>/dev/null || true
-  rm -f "$INSTALL_DIR/core" 2>/dev/null || true
+  rm -rf "$INSTALL_DIR/core" 2>/dev/null || true
   rm -f "$INSTALL_DIR/hooks"/guardrail-*.sh 2>/dev/null || true
   rm -f "$INSTALL_DIR/hooks"/postwrite-guardrail.sh 2>/dev/null || true
   rm -f "$BIN_DIR/ba-kit" 2>/dev/null || true
