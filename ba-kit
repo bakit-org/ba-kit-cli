@@ -512,10 +512,21 @@ register_hooks() {
     echo '{}' > "$settings"
   fi
 
-  python3 << PYEOF
+  PYTHONIOENCODING=utf-8 python3 << PYEOF
 import json, os, re
 
-settings_path = "$settings"
+def to_native(p):
+    # bash on Windows (Git Bash/MSYS) hands us POSIX-style paths like
+    # /c/Users/... . Native Windows python3 (python.org, not MSYS python)
+    # cannot resolve those in open()/os.listdir()/os.path.isfile() — only
+    # os.name == "nt" needs the C:/... rewrite; POSIX python passes through.
+    if os.name == "nt":
+        m = re.match(r"^/([a-zA-Z])/(.*)$", p)
+        if m:
+            return f"{m.group(1)}:/{m.group(2)}"
+    return p
+
+settings_path = to_native("$settings")
 hooks_dir = "$hooks_dir"
 
 with open(settings_path) as f:
@@ -533,7 +544,7 @@ for key in list(hooks_obj.keys()):
     if key not in valid_events:
         del hooks_obj[key]
 
-for hook_file in sorted(os.listdir(hooks_dir)):
+for hook_file in sorted(os.listdir(to_native(hooks_dir))):
     if not hook_file.endswith(".sh"):
         continue
     hook_name = hook_file.replace(".sh", "")
@@ -592,7 +603,7 @@ for event in valid_events:
         for h in entry.get("hooks", []):
             cmd = h.get("command", "")
             m = re.search(r'bash "([^"]+)"', cmd)
-            if m and os.path.isfile(m.group(1)):
+            if m and os.path.isfile(to_native(m.group(1))):
                 ok = True
                 break
         if ok:
@@ -612,10 +623,19 @@ clean_hooks_json() {
   local settings="$HOME/.claude/settings.json"
   [ ! -f "$settings" ] && return
 
-  python3 << PYEOF
+  PYTHONIOENCODING=utf-8 python3 << PYEOF
 import json, os, re
 
-settings_path = "$settings"
+def to_native(p):
+    # See register_hooks() to_native() — same POSIX-vs-native-Windows-python
+    # path mismatch applies here.
+    if os.name == "nt":
+        m = re.match(r"^/([a-zA-Z])/(.*)$", p)
+        if m:
+            return f"{m.group(1)}:/{m.group(2)}"
+    return p
+
+settings_path = to_native("$settings")
 
 with open(settings_path) as f:
     settings = json.load(f)
@@ -638,7 +658,7 @@ for event in valid_events:
         for h in entry.get("hooks", []):
             cmd = h.get("command", "")
             m = re.search(r'bash "([^"]+)"', cmd)
-            if m and os.path.isfile(m.group(1)):
+            if m and os.path.isfile(to_native(m.group(1))):
                 ok = True
                 break
         if ok:
