@@ -26,6 +26,21 @@ PRODUCT_URLS=(
   "https://polar.sh/bakit-org/products/ba-kit-solo-pro"
 )
 
+# ponytail: single source of truth for BA-kit-owned skill/rule filenames —
+# do_backup() and cmd_uninstall() must both scope to exactly these paths, not
+# the whole ~/.claude tree. Keeping one shared list avoids the rules/ba-kit
+# path-mismatch bug (fixed in 1.1.13) from recurring in a second call site.
+BA_KIT_SKILLS=(
+  ba-collab ba-content-audit ba-do ba-figma-sync ba-impact
+  ba-kit-update ba-next ba-notion ba-qc-export ba-start
+  ba-stitch-sync brainstorm qc-uc-review reverse-web
+)
+BA_KIT_RULES=(
+  ba-quality-standards.md ba-workflow.md brainstorm-approval-gate.md
+  brainstorm-changelog.md brainstorm-conventions.md brainstorm-keyword-detection.md
+  brainstorm-naming-conventions.md brainstorm-resolve-oqs.md
+)
+
 # === ENTRY POINT ===
 # ponytail: portable lowercase — macOS bash 3.2 doesn't support ${var,,}
 lowercase() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
@@ -349,14 +364,72 @@ download_release() {
   fi
 }
 
-# ponytail: shared copy logic — excludes backups/ from source to prevent recursive bloat
-_copy_safe() {
+# ponytail: enumerate exactly the agents/ or templates/ files THIS install
+# placed, from release-manifest.json (the same source merge_files() already
+# uses for hash comparison) — not a hardcoded list that drifts every time the
+# content package adds/removes files, and not a whole-directory guess that
+# risks touching the user's own unrelated agents/templates (which happened
+# for real: uninstall's old rm -rf "$INSTALL_DIR/agents" deleted a user's 12
+# personal agent files alongside BA-kit's own 4).
+_ba_kit_manifest_rel_paths() {
+  local manifest_file="$1" prefix="$2"  # prefix: "agents" or "templates"
+  [ -f "$manifest_file" ] || return 0
+  # ponytail: ltrimstr(), not a sub()/regex with backslashes — Git Bash/MSYS
+  # mangles backslash counts in argv passed to native jq.exe on Windows (same
+  # class of bug as the POSIX-path issue fixed elsewhere via to_native()), so
+  # any \. here silently becomes an "Invalid escape" jq compile error and this
+  # whole function returns nothing without visibly failing the install.
+  jq -r --arg p "./.claude/$prefix/" '
+    keys[] | select(startswith($p)) | ltrimstr("./.claude/")
+  ' "$manifest_file" 2>/dev/null
+}
+
+# ponytail: copy only the paths BA-kit itself owns/touches, not the whole
+# ~/.claude tree. ~/.claude can hold gigabytes of unrelated Claude Code state
+# (other skills, cache, session history) — measured 55s+ just to cp -R a real
+# user's skills/ dir alone, which made every install/uninstall feel stuck.
+_copy_scoped() {
   local src="$1" dst="$2"
-  for item in "$src"/*; do
-    if [ "$(basename "$item")" != "backups" ]; then
-      cp -R "$item" "$dst/" 2>/dev/null || true
-    fi
+  local manifest="$src/ba-kit/release-manifest.json"
+
+  [ -e "$src/ba-kit" ] && { cp -R "$src/ba-kit" "$dst/" 2>/dev/null || true; }
+  [ -e "$src/core" ] && { cp -R "$src/core" "$dst/" 2>/dev/null || true; }
+  [ -f "$src/settings.json" ] && { cp "$src/settings.json" "$dst/" 2>/dev/null || true; }
+
+  for prefix in agents templates; do
+    local rel_paths
+    rel_paths=$(_ba_kit_manifest_rel_paths "$manifest" "$prefix")
+    [ -z "$rel_paths" ] && continue
+    while IFS= read -r rel; do
+      [ -z "$rel" ] && continue
+      [ -f "$src/$rel" ] || continue
+      mkdir -p "$dst/$(dirname "$rel")"
+      cp "$src/$rel" "$dst/$rel" 2>/dev/null || true
+    done <<< "$rel_paths"
   done
+
+  if [ -d "$src/skills" ]; then
+    mkdir -p "$dst/skills"
+    for skill in "${BA_KIT_SKILLS[@]}"; do
+      [ -d "$src/skills/$skill" ] && { cp -R "$src/skills/$skill" "$dst/skills/" 2>/dev/null || true; }
+    done
+  fi
+
+  if [ -d "$src/rules" ]; then
+    mkdir -p "$dst/rules"
+    for rule_file in "${BA_KIT_RULES[@]}"; do
+      [ -f "$src/rules/$rule_file" ] && { cp "$src/rules/$rule_file" "$dst/rules/" 2>/dev/null || true; }
+    done
+  fi
+
+  if [ -d "$src/hooks" ]; then
+    mkdir -p "$dst/hooks"
+    for hook_file in "$src/hooks"/guardrail-*.sh "$src/hooks/postwrite-guardrail.sh"; do
+      [ -f "$hook_file" ] && { cp "$hook_file" "$dst/hooks/" 2>/dev/null || true; }
+    done
+  fi
+
+  return 0
 }
 
 # ============================================================
@@ -368,7 +441,7 @@ do_backup() {
     mkdir -p "$BACKUP_PATH"
     echo "Đang backup ~/.claude/ hiện tại vào:"
     echo "  ${BACKUP_PATH}"
-    _copy_safe "$INSTALL_DIR" "$BACKUP_PATH"
+    _copy_scoped "$INSTALL_DIR" "$BACKUP_PATH"
     echo "  Backup hoàn tất."
     # ponytail: keep 5 most recent backups, delete older
     prune_backups
@@ -1023,25 +1096,40 @@ cmd_uninstall() {
   local backup_path="${BACKUP_DIR}/pre-uninstall-$(date +%Y-%m-%d-%H%M%S)"
   mkdir -p "$backup_path"
   if [ -d "$INSTALL_DIR" ]; then
-    _copy_safe "$INSTALL_DIR" "$backup_path"
+    _copy_scoped "$INSTALL_DIR" "$backup_path"
     echo "Đã backup vào: ${backup_path}"
   fi
 
   echo "Đang xóa ${product_name} files..."
 
-  for skill in ba-collab ba-content-audit ba-do ba-figma-sync ba-impact \
-              ba-kit-update ba-next ba-notion ba-qc-export ba-start \
-              ba-stitch-sync brainstorm qc-uc-review reverse-web; do
+  # ponytail: read agents/templates file lists from the manifest before
+  # ba-kit/ (which holds it) gets removed below — whole-directory rm -rf here
+  # previously deleted a user's own unrelated files sitting in the same dirs.
+  local agent_rel_paths templates_rel_paths
+  agent_rel_paths=$(_ba_kit_manifest_rel_paths "$MANIFEST_FILE" agents)
+  templates_rel_paths=$(_ba_kit_manifest_rel_paths "$MANIFEST_FILE" templates)
+
+  for skill in "${BA_KIT_SKILLS[@]}"; do
     rm -rf "$INSTALL_DIR/skills/$skill" 2>/dev/null || true
   done
 
-  rm -rf "$INSTALL_DIR/agents" 2>/dev/null || true
-  for rule_file in ba-quality-standards.md ba-workflow.md brainstorm-approval-gate.md \
-              brainstorm-changelog.md brainstorm-conventions.md brainstorm-keyword-detection.md \
-              brainstorm-naming-conventions.md brainstorm-resolve-oqs.md; do
+  if [ -n "$agent_rel_paths" ]; then
+    while IFS= read -r rel; do
+      [ -n "$rel" ] && rm -f "$INSTALL_DIR/$rel" 2>/dev/null || true
+    done <<< "$agent_rel_paths"
+  fi
+
+  for rule_file in "${BA_KIT_RULES[@]}"; do
     rm -f "$INSTALL_DIR/rules/$rule_file" 2>/dev/null || true
   done
-  rm -rf "$INSTALL_DIR/templates" 2>/dev/null || true
+
+  if [ -n "$templates_rel_paths" ]; then
+    while IFS= read -r rel; do
+      [ -n "$rel" ] && rm -f "$INSTALL_DIR/$rel" 2>/dev/null || true
+    done <<< "$templates_rel_paths"
+    find "$INSTALL_DIR/templates" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+  fi
+
   rm -rf "$INSTALL_DIR/ba-kit" 2>/dev/null || true
   rm -rf "$INSTALL_DIR/core" 2>/dev/null || true
   rm -f "$INSTALL_DIR/hooks"/guardrail-*.sh 2>/dev/null || true
