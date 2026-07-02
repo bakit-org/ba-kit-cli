@@ -5,6 +5,13 @@ set -euo pipefail
 # BA-kit CLI — AI-powered Business Analyst toolkit for Claude Code
 # ============================================================
 
+# ponytail: when invoked via cmd.exe or PowerShell on Windows, $HOME may be
+# a Windows path (C:\Users\...). Normalize to Unix format so all path
+# operations work correctly in bash.
+if command -v cygpath &>/dev/null; then
+  HOME=$(cygpath -u "$HOME" 2>/dev/null || echo "$HOME")
+fi
+
 # === CONFIG ===
 INSTALL_DIR="$HOME/.claude"
 BACKUP_DIR="$INSTALL_DIR/backups"
