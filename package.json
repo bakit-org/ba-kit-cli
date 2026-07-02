@@ -1,0 +1,15 @@
+{
+  "name": "@bakit/cli",
+  "version": "1.0.0",
+  "description": "BA-kit CLI — AI-powered Business Analyst toolkit for Claude Code",
+  "bin": {
+    "ba-kit": "./ba-kit"
+  },
+  "files": [
+    "ba-kit",
+    "README.md"
+  ],
+  "keywords": ["ba-kit", "business-analyst", "claude-code", "requirements"],
+  "license": "MIT",
+  "repository": "github:bakit-org/ba-kit-cli"
+}

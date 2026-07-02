@@ -1,0 +1,805 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ============================================================
+# BA-kit CLI — AI-powered Business Analyst toolkit for Claude Code
+# ============================================================
+
+# === CONFIG ===
+REPO="bakit-org/bakit"
+INSTALL_DIR="$HOME/.claude"
+BACKUP_DIR="$INSTALL_DIR/backups"
+VERSION_FILE="$INSTALL_DIR/ba-kit/VERSION"
+MANIFEST_FILE="$INSTALL_DIR/ba-kit/release-manifest.json"
+BIN_DIR="$HOME/.local/bin"
+
+# === ENTRY POINT ===
+main() {
+  case "${1:-}" in
+    install)   shift; cmd_install "$@" ;;
+    update)    cmd_update ;;
+    doctor)    cmd_doctor ;;
+    version)   cmd_version ;;
+    uninstall) cmd_uninstall ;;
+    help|--help|-h)
+      usage
+      ;;
+    *)
+      echo "BA-kit CLI — AI-powered Business Analyst toolkit for Claude Code"
+      echo ""
+      echo "Commands:"
+      echo "  ba-kit install              Cài đặt BA-kit lần đầu"
+      echo "  ba-kit install --version X  Cài version cụ thể (vd: v1.2.0)"
+      echo "  ba-kit update               Cập nhật lên phiên bản mới nhất"
+      echo "  ba-kit doctor               Kiểm tra trạng thái cài đặt"
+      echo "  ba-kit version              Hiển thị phiên bản đã cài"
+      echo "  ba-kit uninstall            Gỡ cài đặt (có backup)"
+      echo ""
+      echo "Mua BA-kit: https://polar.sh/bakit-org/products/ba-kit"
+      ;;
+  esac
+}
+
+usage() {
+  echo "BA-kit CLI"
+  echo ""
+  echo "Commands:"
+  echo "  ba-kit install              Cài đặt BA-kit lần đầu"
+  echo "  ba-kit install --version X  Cài version cụ thể"
+  echo "  ba-kit update               Cập nhật lên phiên bản mới nhất"
+  echo "  ba-kit doctor               Kiểm tra trạng thái cài đặt"
+  echo "  ba-kit version              Hiển thị phiên bản đã cài"
+  echo "  ba-kit uninstall            Gỡ cài đặt (có backup)"
+  echo ""
+  echo "Mua BA-kit: https://polar.sh/bakit-org/products/ba-kit"
+}
+
+# ============================================================
+# B1: KIỂM TRA PREREQUISITES
+# ============================================================
+check_prereqs() {
+  # 1a. Kiểm tra gh CLI đã cài chưa
+  if ! command -v gh &>/dev/null; then
+    echo "=============================================="
+    echo "  CHƯA CÀI GITHUB CLI (gh)"
+    echo "=============================================="
+    echo ""
+    echo "GitHub CLI là công cụ để máy tính xác thực với GitHub."
+    echo "BA-kit cần gh CLI để tải content từ private repo."
+    echo ""
+    echo "Cách cài:"
+    echo "  macOS:            brew install gh"
+    echo "  Windows:          winget install GitHub.CLI"
+    echo "                     Hoặc tải từ: https://cli.github.com"
+    echo "  Linux (Ubuntu):   sudo apt install gh"
+    echo "  Linux (Fedora):   sudo dnf install gh"
+    echo ""
+    echo "Sau khi cài, chạy: gh auth login"
+    echo "  → Chọn: GitHub.com"
+    echo "  → Chọn: HTTPS"
+    echo "  → Chọn: Login with a web browser"
+    echo "=============================================="
+    exit 1
+  fi
+
+  # 1b. Kiểm tra gh đã đăng nhập chưa
+  if ! gh auth status -h github.com &>/dev/null 2>&1; then
+    echo "=============================================="
+    echo "  CHƯA ĐĂNG NHẬP GITHUB"
+    echo "=============================================="
+    echo ""
+    echo "Bạn cần đăng nhập GitHub CLI để truy cập repo BA-kit."
+    echo ""
+    echo "Chạy lệnh sau và làm theo hướng dẫn:"
+    echo ""
+    echo "  gh auth login"
+    echo ""
+    echo "Khi được hỏi, chọn:"
+    echo "  1. What account do you want to log into?"
+    echo "     → GitHub.com"
+    echo "  2. What is your preferred protocol for Git operations?"
+    echo "     → HTTPS"
+    echo "  3. How would you like to authenticate GitHub CLI?"
+    echo "     → Login with a web browser"
+    echo "  4. Trình duyệt sẽ mở ra → copy mã code từ Terminal paste vào"
+    echo "=============================================="
+    exit 1
+  fi
+}
+
+# ============================================================
+# B2: KIỂM TRA QUYỀN TRUY CẬP PRIVATE REPO
+# ============================================================
+check_access() {
+  echo "Đang kiểm tra quyền truy cập BA-kit..."
+
+  if gh api "repos/${REPO}" --jq '.private' &>/dev/null 2>&1; then
+    echo "  Bạn đã có quyền truy cập BA-kit."
+    return 0
+  fi
+
+  echo ""
+  echo "=============================================="
+  echo "  CHƯA CÓ QUYỀN TRUY CẬP BA-KIT"
+  echo "=============================================="
+  echo ""
+  echo "Bạn chưa được cấp quyền truy cập repo BA-kit."
+  echo "Điều này thường xảy ra khi:"
+  echo "  1. Bạn chưa mua BA-kit"
+  echo "  2. Bạn đã mua nhưng chưa accept GitHub invite"
+  echo ""
+  echo "Cách khắc phục:"
+  echo "  - Chưa mua:  vào https://polar.sh/bakit-org/products/ba-kit để mua"
+  echo "  - Đã mua:    kiểm tra email (cả spam) tìm \"invited you to bakit-org/bakit\""
+  echo "               Click \"Accept invitation\" trong email"
+  echo "  - Đã accept: chạy 'gh auth login' để đăng nhập lại"
+  echo "=============================================="
+  exit 1
+}
+
+# ============================================================
+# B3: CHỌN VERSION
+# ============================================================
+select_version() {
+  local target="${1:-latest}"
+
+  if [ "$target" = "latest" ]; then
+    echo "Đang tìm phiên bản mới nhất..."
+
+    local release_json
+    if ! release_json=$(gh api "repos/${REPO}/releases/latest" 2>/dev/null); then
+      echo "Lỗi: Không thể lấy thông tin phiên bản từ GitHub."
+      echo "Vui lòng kiểm tra kết nối mạng và thử lại."
+      exit 1
+    fi
+
+    SELECTED_VERSION=$(echo "$release_json" | jq -r '.tag_name')
+    RELEASE_NOTES=$(echo "$release_json" | jq -r '.body // ""')
+  else
+    # Kiểm tra version có tồn tại không
+    local release_json
+    if ! release_json=$(gh api "repos/${REPO}/releases/tags/${target}" 2>/dev/null); then
+      echo "Lỗi: Phiên bản '${target}' không tồn tại."
+      echo "Dùng 'ba-kit install' (không --version) để cài bản mới nhất."
+      exit 1
+    fi
+    SELECTED_VERSION="$target"
+    RELEASE_NOTES=$(echo "$release_json" | jq -r '.body // ""')
+  fi
+
+  echo "  Phiên bản: ${SELECTED_VERSION}"
+  if [ -n "${RELEASE_NOTES:-}" ] && [ "${RELEASE_NOTES:-}" != "null" ]; then
+    echo ""
+    echo "Thay đổi trong phiên bản này:"
+    echo "----------------------------------------"
+    echo "$RELEASE_NOTES" | head -20
+    echo "----------------------------------------"
+    echo ""
+  fi
+}
+
+# ============================================================
+# B4: KIỂM TRA ĐÃ CÀI CHƯA
+# ============================================================
+check_already_installed() {
+  if [ -f "$VERSION_FILE" ]; then
+    local current
+    current=$(cat "$VERSION_FILE")
+    if [ "$current" = "$SELECTED_VERSION" ]; then
+      echo "Phiên bản ${SELECTED_VERSION} đã được cài đặt."
+      echo ""
+      read -r -p "Bạn có muốn cài lại không? (y/N): " confirm
+      if [ "${confirm,,}" != "y" ]; then
+        echo "Đã hủy."
+        exit 0
+      fi
+    fi
+  fi
+}
+
+# ============================================================
+# B5: TẢI RELEASE + VERIFY CHECKSUM
+# ============================================================
+download_release() {
+  echo "Đang tải ba-kit-${SELECTED_VERSION}.tar.gz..."
+  echo "  (Dung lượng khoảng 2-5 MB, tùy tốc độ mạng có thể mất vài giây)"
+
+  # Tạo thư mục tạm
+  TMP_DIR=$(mktemp -d)
+  ARCHIVE_FILE="${TMP_DIR}/ba-kit-${SELECTED_VERSION}.tar.gz"
+
+  # Tải archive từ GitHub Releases (dùng gh CLI, tự động auth)
+  if ! gh release download "$SELECTED_VERSION" \
+      -R "$REPO" \
+      -p "ba-kit-${SELECTED_VERSION}.tar.gz" \
+      -O "$ARCHIVE_FILE" \
+      --clobber 2>/dev/null; then
+    echo "Lỗi: Không thể tải BA-kit ${SELECTED_VERSION}."
+    echo "Vui lòng kiểm tra kết nối mạng và thử lại."
+    rm -rf "$TMP_DIR"
+    exit 1
+  fi
+
+  echo "  Đã tải xong. Đang kiểm tra checksum..."
+
+  # Tải file checksum
+  local checksum_file="${TMP_DIR}/checksum.sha256"
+  if gh release download "$SELECTED_VERSION" \
+      -R "$REPO" \
+      -p "ba-kit-${SELECTED_VERSION}.tar.gz.sha256" \
+      -O "$checksum_file" \
+      --clobber 2>/dev/null; then
+
+    local expected actual
+    expected=$(cut -d' ' -f1 "$checksum_file")
+    actual=$(sha256sum "$ARCHIVE_FILE" | cut -d' ' -f1)
+
+    if [ "$expected" != "$actual" ]; then
+      echo "Lỗi: File tải về bị lỗi (checksum không khớp)."
+      echo "Vui lòng thử lại hoặc liên hệ hỗ trợ."
+      rm -rf "$TMP_DIR"
+      exit 1
+    fi
+    echo "  Checksum hợp lệ."
+  else
+    echo "  Không tìm thấy file checksum, bỏ qua bước kiểm tra."
+  fi
+}
+
+# ============================================================
+# B6: BACKUP
+# ============================================================
+do_backup() {
+  if [ -d "$INSTALL_DIR" ] && [ "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
+    BACKUP_PATH="${BACKUP_DIR}/$(date +%Y-%m-%d-%H%M%S)"
+    mkdir -p "$BACKUP_PATH"
+    echo "Đang backup ~/.claude/ hiện tại vào:"
+    echo "  ${BACKUP_PATH}"
+    cp -R "$INSTALL_DIR"/* "$BACKUP_PATH/" 2>/dev/null || true
+    echo "  Backup hoàn tất."
+  fi
+}
+
+# ============================================================
+# B7: GIẢI NÉN
+# ============================================================
+extract_release() {
+  echo "Đang giải nén..."
+
+  EXTRACT_DIR="${TMP_DIR}/extracted"
+  mkdir -p "$EXTRACT_DIR"
+  tar -xzf "$ARCHIVE_FILE" -C "$EXTRACT_DIR"
+
+  echo "  Giải nén hoàn tất."
+}
+
+# ============================================================
+# B8: MERGE FILE VÀO ~/.claude/
+# ============================================================
+merge_files() {
+  local src="$1"       # Source directory (từ extract)
+  local dest="$2"       # Destination directory (~/.claude/)
+  local force="${3:-false}"
+
+  [ ! -d "$src" ] && return
+
+  mkdir -p "$dest"
+
+  # Load old manifest (nếu có) để so sánh
+  local old_manifest="{}"
+  [ -f "$MANIFEST_FILE" ] && old_manifest=$(cat "$MANIFEST_FILE")
+
+  # Load new manifest từ release
+  local new_manifest="{}"
+  local parent_manifest
+  parent_manifest=$(dirname "$src")/release-manifest.json
+  [ -f "$parent_manifest" ] && new_manifest=$(cat "$parent_manifest")
+
+  local created=0 updated=0 preserved=0
+
+  # Duyệt từng file trong source
+  while IFS= read -r -d '' src_file; do
+    local rel_path="${src_file#$src/}"
+    local dest_file="$dest/$rel_path"
+
+    # Skip directories (sẽ được tạo khi copy file)
+    if [ -d "$src_file" ]; then
+      continue
+    fi
+
+    # === CASE 1: File chưa tồn tại → copy mới ===
+    if [ ! -f "$dest_file" ]; then
+      mkdir -p "$(dirname "$dest_file")"
+      cp "$src_file" "$dest_file"
+      ((created++))
+      continue
+    fi
+
+    # === CASE 2: Force mode → luôn overwrite ===
+    if $force; then
+      cp "$src_file" "$dest_file"
+      ((updated++))
+      continue
+    fi
+
+    # === CASE 3: Protected files → không bao giờ đụng ===
+    if is_protected "$rel_path"; then
+      ((preserved++))
+      continue
+    fi
+
+    # === CASE 4: So sánh SHA256 để quyết định ===
+    local old_hash new_hash current_hash
+    old_hash=$(echo "$old_manifest" | jq -r ".\"$rel_path\" // empty" 2>/dev/null)
+    new_hash=$(sha256sum "$src_file" | cut -d' ' -f1)
+    current_hash=$(sha256sum "$dest_file" | cut -d' ' -f1)
+
+    if [ "$old_hash" = "$current_hash" ] || [ "$new_hash" = "$current_hash" ]; then
+      # File chưa bị user sửa (giống bản cũ hoặc giống bản mới)
+      # → An toàn để overwrite
+      cp "$src_file" "$dest_file"
+      ((updated++))
+    else
+      # File đã bị user sửa → giữ nguyên
+      ((preserved++))
+    fi
+  done < <(find "$src" -print0)
+
+  echo "  ${created} file mới | ${updated} file cập nhật | ${preserved} file giữ nguyên (đã tùy chỉnh)"
+}
+
+# Danh sách file được bảo vệ (không bao giờ ghi đè)
+is_protected() {
+  local path="$1"
+  case "$path" in
+    .env|.env.*|credentials/*|tokens/*|secrets/*|*.key|*.pem)
+      return 0 ;;  # protected
+  esac
+  return 1
+}
+
+# ============================================================
+# B9: POST-INSTALL
+# ============================================================
+post_install() {
+  echo "Đang hoàn tất cài đặt..."
+
+  # 9a. Copy CLI binary (self-update)
+  if [ -f "$EXTRACT_DIR/.local/bin/ba-kit" ]; then
+    mkdir -p "$BIN_DIR"
+    cp "$EXTRACT_DIR/.local/bin/ba-kit" "$BIN_DIR/ba-kit"
+    chmod +x "$BIN_DIR/ba-kit"
+  fi
+
+  # 9b. Đăng ký hooks vào settings.json
+  register_hooks
+
+  # 9c. Cài Python dependencies (nếu có requirements.txt)
+  if [ -f "$INSTALL_DIR/ba-kit/scripts/requirements.txt" ]; then
+    if command -v python3 &>/dev/null; then
+      python3 -m pip install -r "$INSTALL_DIR/ba-kit/scripts/requirements.txt" --quiet 2>/dev/null || true
+    fi
+  fi
+
+  # 9d. Tạo symlink ~/.claude/core → ~/.claude/ba-kit (backwards compat)
+  if [ -d "$INSTALL_DIR/ba-kit" ]; then
+    ln -sfn "$INSTALL_DIR/ba-kit" "$INSTALL_DIR/core" 2>/dev/null || true
+  fi
+
+  echo "  Hoàn tất."
+}
+
+# Đăng ký hooks vào ~/.claude/settings.json
+register_hooks() {
+  local settings="$HOME/.claude/settings.json"
+  local hooks_dir="$INSTALL_DIR/hooks"
+
+  [ ! -d "$hooks_dir" ] && return
+
+  echo "  Đang đăng ký hooks..."
+
+  # Nếu settings.json chưa tồn tại, tạo mới
+  if [ ! -f "$settings" ]; then
+    echo '{"hooks": {}}' > "$settings"
+  fi
+
+  # Dùng python để merge hooks (vì bash khó xử lý JSON lồng)
+  python3 -c "
+import json, os
+
+settings_path = '$settings'
+hooks_dir = '$hooks_dir'
+
+with open(settings_path) as f:
+    settings = json.load(f)
+
+if 'hooks' not in settings:
+    settings['hooks'] = {}
+
+hook_count = 0
+for hook_file in sorted(os.listdir(hooks_dir)):
+    if not hook_file.endswith('.sh'):
+        continue
+    hook_name = hook_file.replace('.sh', '')
+    hook_path = os.path.join(hooks_dir, hook_file)
+
+    # Xác định event type từ tên file
+    if 'preflight' in hook_name and 'guard' not in hook_name:
+        event = 'UserPromptSubmit'
+        matcher = ''
+    elif 'audit' in hook_name and 'context-audit' in hook_name:
+        event = 'Stop'
+        matcher = ''
+    elif 'context-preflight' in hook_name or 'preflight-guard' in hook_name:
+        event = 'PreToolUse'
+        matcher = 'Read|Glob'
+    elif 'context-output' in hook_name or 'output-guard' in hook_name:
+        event = 'PostToolUse'
+        matcher = 'Bash|Read|Grep|Glob'
+    elif 'write-scope' in hook_name:
+        event = 'PreToolUse'
+        matcher = 'Write|Edit'
+    elif 'postwrite' in hook_name:
+        event = 'PostToolUse'
+        matcher = 'Write|Edit'
+    elif 'index-validation' in hook_name:
+        event = 'PostToolUse'
+        matcher = 'Write|Edit'
+    else:
+        continue
+
+    settings['hooks'][hook_name] = {
+        'type': 'command',
+        'command': f'bash \"{hook_path}\"',
+        'matcher': matcher
+    }
+    hook_count += 1
+
+with open(settings_path, 'w') as f:
+    json.dump(settings, f, indent=2)
+
+print(f'  Registered {hook_count} hooks')
+" 2>/dev/null || echo "  Warning: Không thể đăng ký hooks (cần python3)"
+}
+
+# ============================================================
+# B10: LƯU VERSION + MANIFEST
+# ============================================================
+save_state() {
+  echo "Đang lưu thông tin phiên bản..."
+
+  # Lưu version hiện tại
+  mkdir -p "$(dirname "$VERSION_FILE")"
+  echo "$SELECTED_VERSION" > "$VERSION_FILE"
+
+  # Lưu release manifest (để lần sau so sánh khi update)
+  if [ -f "$EXTRACT_DIR/release-manifest.json" ]; then
+    cp "$EXTRACT_DIR/release-manifest.json" "$MANIFEST_FILE"
+  fi
+}
+
+# ============================================================
+# B11: DỌN DẸP
+# ============================================================
+cleanup() {
+  if [ -n "${TMP_DIR:-}" ] && [ -d "$TMP_DIR" ]; then
+    rm -rf "$TMP_DIR"
+  fi
+}
+
+# ============================================================
+# B12: HIỂN THỊ KẾT QUẢ
+# ============================================================
+show_result() {
+  echo ""
+  echo "=============================================="
+  echo "  CÀI ĐẶT BA-KIT THÀNH CÔNG!"
+  echo "=============================================="
+  echo ""
+  echo "  Phiên bản:  ${SELECTED_VERSION}"
+
+  local skill_count agent_count template_count hook_count
+  skill_count=$(ls -1 "$INSTALL_DIR/skills/" 2>/dev/null | wc -l | tr -d ' ')
+  agent_count=$(ls -1 "$INSTALL_DIR/agents/" 2>/dev/null | wc -l | tr -d ' ')
+  template_count=$(ls -1 "$INSTALL_DIR/templates/" 2>/dev/null | wc -l | tr -d ' ')
+  hook_count=$(ls -1 "$INSTALL_DIR/hooks/" 2>/dev/null | wc -l | tr -d ' ')
+
+  echo "  Skills:     ${skill_count}"
+  echo "  Agents:     ${agent_count}"
+  echo "  Templates:  ${template_count}"
+  echo "  Hooks:      ${hook_count}"
+
+  if [ -f "$BACKUP_PATH" ] 2>/dev/null || [ -n "${BACKUP_PATH:-}" ]; then
+    echo ""
+    echo "  Backup cũ:  ${BACKUP_PATH:-$BACKUP_DIR}"
+  fi
+
+  echo ""
+  echo "  Bắt đầu sử dụng:"
+  echo "    Vào Claude Code (/claude trong Terminal)"
+  echo "    Gõ /ba-start để bắt đầu dự án BA"
+  echo ""
+  echo "  Cập nhật sau này:"
+  echo "    ba-kit update"
+  echo ""
+  echo "  Kiểm tra sức khỏe:"
+  echo "    ba-kit doctor"
+  echo "=============================================="
+}
+
+# ============================================================
+# COMMAND: ba-kit install
+# ============================================================
+cmd_install() {
+  local target_version="latest"
+
+  # Parse args
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --version)
+        target_version="$2"
+        shift 2
+        ;;
+      *)
+        echo "Không hiểu tham số: $1"
+        echo "Dùng: ba-kit install [--version v1.2.0]"
+        exit 1
+        ;;
+    esac
+  done
+
+  echo ""
+  echo "=============================================="
+  echo "  BA-KIT INSTALL"
+  echo "=============================================="
+  echo ""
+
+  # Chạy từng bước
+  check_prereqs                         # B1
+  check_access                          # B2
+  select_version "$target_version"      # B3
+  check_already_installed               # B4
+  download_release                      # B5
+  do_backup                             # B6
+  extract_release                       # B7
+
+  echo "Đang cài đặt files..."
+
+  # B8: Merge .claude/ content
+  merge_files "$EXTRACT_DIR/.claude" "$INSTALL_DIR"
+
+  # B8b: Merge ba-kit/ core (force overwrite vì là system files)
+  merge_files "$EXTRACT_DIR/ba-kit" "$INSTALL_DIR/ba-kit" true
+
+  post_install                          # B9
+  save_state                            # B10
+  cleanup                               # B11
+  show_result                           # B12
+}
+
+# ============================================================
+# COMMAND: ba-kit update
+# ============================================================
+cmd_update() {
+  echo ""
+  echo "=============================================="
+  echo "  BA-KIT UPDATE"
+  echo "=============================================="
+  echo ""
+
+  check_prereqs
+
+  # Đọc version hiện tại
+  if [ ! -f "$VERSION_FILE" ]; then
+    echo "BA-kit chưa được cài đặt."
+    echo "Chạy: ba-kit install"
+    exit 1
+  fi
+
+  local current
+  current=$(cat "$VERSION_FILE")
+  echo "Phiên bản hiện tại: ${current}"
+
+  # Lấy version mới nhất
+  local latest
+  latest=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name' 2>/dev/null) || {
+    echo "Lỗi: Không thể kiểm tra phiên bản mới."
+    exit 1
+  }
+  echo "Phiên bản mới nhất: ${latest}"
+
+  # So sánh
+  if [ "$current" = "$latest" ]; then
+    echo ""
+    echo "Bạn đang dùng phiên bản mới nhất."
+    exit 0
+  fi
+
+  # Hiển thị changelog
+  local changelog
+  changelog=$(gh api "repos/${REPO}/releases/latest" --jq '.body // ""' 2>/dev/null)
+  echo ""
+  echo "Thay đổi trong ${latest}:"
+  echo "----------------------------------------"
+  echo "${changelog:-}" | head -30
+  echo "----------------------------------------"
+  echo ""
+
+  # Xác nhận
+  read -r -p "Cập nhật lên ${latest}? (Y/n): " confirm
+  if [ "${confirm,,}" = "n" ]; then
+    echo "Đã hủy."
+    exit 0
+  fi
+
+  # Reuse install flow
+  echo ""
+  echo "Đang cập nhật..."
+  SELECTED_VERSION="$latest"
+  RELEASE_NOTES="$changelog"
+  check_access
+  download_release
+  do_backup
+  extract_release
+
+  echo "Đang cập nhật files..."
+
+  merge_files "$EXTRACT_DIR/.claude" "$INSTALL_DIR"
+  merge_files "$EXTRACT_DIR/ba-kit" "$INSTALL_DIR/ba-kit" true
+
+  post_install
+  save_state
+  cleanup
+  show_result
+}
+
+# ============================================================
+# COMMAND: ba-kit doctor
+# ============================================================
+cmd_doctor() {
+  echo ""
+  echo "=============================================="
+  echo "  BA-KIT HEALTH CHECK"
+  echo "=============================================="
+  echo ""
+
+  # Version check
+  if [ -f "$VERSION_FILE" ]; then
+    echo "[OK]   BA-kit version: $(cat "$VERSION_FILE")"
+  else
+    echo "[CHƯA] BA-kit chưa được cài đặt"
+    echo "       Chạy: ba-kit install"
+  fi
+
+  # gh CLI
+  if command -v gh &>/dev/null; then
+    local gh_ver
+    gh_ver=$(gh --version 2>/dev/null | head -1 || echo "unknown")
+    echo "[OK]   GitHub CLI: ${gh_ver}"
+  else
+    echo "[THIẾU] GitHub CLI chưa cài"
+    echo "        macOS: brew install gh"
+    echo "        Khác: https://cli.github.com"
+  fi
+
+  # gh auth
+  if gh auth status -h github.com &>/dev/null 2>&1; then
+    local gh_user
+    gh_user=$(gh api user --jq '.login' 2>/dev/null || echo "unknown")
+    echo "[OK]   GitHub auth: ${gh_user}"
+  else
+    echo "[THIẾU] GitHub chưa đăng nhập"
+    echo "        Chạy: gh auth login"
+  fi
+
+  # Repo access
+  if gh api "repos/${REPO}" --jq '.private' &>/dev/null 2>&1; then
+    echo "[OK]   Repo access: có quyền truy cập BA-kit"
+  else
+    echo "[THIẾU] Repo access: KHÔNG có quyền truy cập BA-kit"
+    echo "        Mua: https://polar.sh/bakit-org/products/ba-kit"
+    echo "        Hoặc kiểm tra email GitHub invite"
+  fi
+
+  # Python
+  if command -v python3 &>/dev/null; then
+    local py_ver
+    py_ver=$(python3 --version 2>&1)
+    echo "[OK]   Python: ${py_ver}"
+  else
+    echo "[CẢNH BÁO] Python3 chưa cài (cần cho guardrail scripts)"
+  fi
+
+  # Components
+  echo ""
+  echo "Components đã cài:"
+  [ -d "$INSTALL_DIR/skills" ]    && echo "  Skills:    $(ls -1 "$INSTALL_DIR/skills/" 2>/dev/null | wc -l | tr -d ' ') thư mục"
+  [ -d "$INSTALL_DIR/agents" ]    && echo "  Agents:    $(ls -1 "$INSTALL_DIR/agents/" 2>/dev/null | wc -l | tr -d ' ') file"
+  [ -d "$INSTALL_DIR/templates" ] && echo "  Templates: $(ls -1 "$INSTALL_DIR/templates/" 2>/dev/null | wc -l | tr -d ' ') file"
+  [ -d "$INSTALL_DIR/hooks" ]     && echo "  Hooks:     $(ls -1 "$INSTALL_DIR/hooks/" 2>/dev/null | wc -l | tr -d ' ') file"
+  [ -d "$INSTALL_DIR/ba-kit" ]    && echo "  Core:      ~/.claude/ba-kit/"
+
+  echo ""
+}
+
+# ============================================================
+# COMMAND: ba-kit version
+# ============================================================
+cmd_version() {
+  if [ -f "$VERSION_FILE" ]; then
+    echo "BA-kit $(cat "$VERSION_FILE")"
+  else
+    echo "BA-kit CLI (chưa cài content)"
+    echo "Chạy: ba-kit install"
+  fi
+}
+
+# ============================================================
+# COMMAND: ba-kit uninstall
+# ============================================================
+cmd_uninstall() {
+  echo ""
+  echo "=============================================="
+  echo "  GỠ CÀI ĐẶT BA-KIT"
+  echo "=============================================="
+  echo ""
+  echo "Thao tác này sẽ xóa BA-kit khỏi ~/.claude/."
+  echo "Một bản backup sẽ được tạo trước khi xóa."
+  echo ""
+
+  read -r -p "Bạn có chắc muốn tiếp tục? (y/N): " confirm
+  if [ "${confirm,,}" != "y" ]; then
+    echo "Đã hủy."
+    exit 0
+  fi
+
+  echo ""
+
+  # Backup
+  local backup_path="${BACKUP_DIR}/pre-uninstall-$(date +%Y-%m-%d-%H%M%S)"
+  mkdir -p "$backup_path"
+  if [ -d "$INSTALL_DIR" ]; then
+    cp -R "$INSTALL_DIR"/* "$backup_path/" 2>/dev/null || true
+    echo "Đã backup vào: ${backup_path}"
+  fi
+
+  # Xóa BA-kit components
+  echo "Đang xóa BA-kit files..."
+
+  # Skills (chỉ xóa BA-kit skills, giữ user skills)
+  for skill in ba-collab ba-content-audit ba-do ba-figma-sync ba-impact \
+              ba-kit-update ba-next ba-notion ba-qc-export ba-start \
+              ba-stitch-sync brainstorm qc-uc-review reverse-web; do
+    rm -rf "$INSTALL_DIR/skills/$skill" 2>/dev/null || true
+  done
+
+  # Agents
+  rm -rf "$INSTALL_DIR/agents" 2>/dev/null || true
+
+  # Rules
+  rm -rf "$INSTALL_DIR/rules/ba-kit" 2>/dev/null || true
+
+  # Templates
+  rm -rf "$INSTALL_DIR/templates" 2>/dev/null || true
+
+  # Core
+  rm -rf "$INSTALL_DIR/ba-kit" 2>/dev/null || true
+  rm -f "$INSTALL_DIR/core" 2>/dev/null || true
+
+  # Hooks (chỉ xóa BA-kit hooks)
+  rm -f "$INSTALL_DIR/hooks"/guardrail-*.sh 2>/dev/null || true
+  rm -f "$INSTALL_DIR/hooks"/postwrite-guardrail.sh 2>/dev/null || true
+
+  # CLI binary
+  rm -f "$BIN_DIR/ba-kit" 2>/dev/null || true
+
+  echo "Đã gỡ cài đặt BA-kit."
+  echo "Backup tại: ${backup_path}"
+  echo ""
+  echo "Để cài lại: npm install -g @bakit/cli && ba-kit install"
+}
+
+# ============================================================
+# RUN
+# ============================================================
+main "$@"
