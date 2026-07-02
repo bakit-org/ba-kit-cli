@@ -504,7 +504,7 @@ register_hooks() {
     echo '{}' > "$settings"
   fi
 
-  python3 << 'PYEOF'
+  python3 << PYEOF
 import json, os, re
 
 settings_path = "$settings"
@@ -604,7 +604,7 @@ clean_hooks_json() {
   local settings="$HOME/.claude/settings.json"
   [ ! -f "$settings" ] && return
 
-  python3 << 'PYEOF'
+  python3 << PYEOF
 import json, os, re
 
 settings_path = "$settings"
