@@ -460,12 +460,11 @@ post_install() {
     cp "$EXTRACT_DIR/.local/bin/ba-kit" "$INSTALL_DIR/ba-kit/ba-kit"
     chmod +x "$INSTALL_DIR/ba-kit/ba-kit"
 
-    # Also update .local/bin if the symlink is us (npm), to avoid framework shadowing
-    if [ -L "$BIN_DIR/ba-kit" ] || [ ! -f "$BIN_DIR/ba-kit" ]; then
-      mkdir -p "$BIN_DIR"
-      cp "$EXTRACT_DIR/.local/bin/ba-kit" "$BIN_DIR/ba-kit"
-      chmod +x "$BIN_DIR/ba-kit"
-    fi
+    # Overwrite .local/bin/ba-kit with framework binary — whatever was
+    # there before (npm symlink, stale framework) gets replaced.
+    mkdir -p "$BIN_DIR"
+    cp "$EXTRACT_DIR/.local/bin/ba-kit" "$BIN_DIR/ba-kit"
+    chmod +x "$BIN_DIR/ba-kit"
   fi
 
   register_hooks

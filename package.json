@@ -1,14 +1,18 @@
 {
   "name": "@bakit-org/cli",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "BA-kit CLI — AI-powered Business Analyst toolkit for Claude Code",
   "bin": {
     "ba-kit": "./ba-kit"
   },
   "files": [
     "ba-kit",
-    "README.md"
+    "README.md",
+    "postinstall.js"
   ],
+  "scripts": {
+    "postinstall": "node postinstall.js"
+  },
   "keywords": [
     "ba-kit",
     "business-analyst",
