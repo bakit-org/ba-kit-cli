@@ -342,7 +342,12 @@ do_backup() {
     mkdir -p "$BACKUP_PATH"
     echo "Đang backup ~/.claude/ hiện tại vào:"
     echo "  ${BACKUP_PATH}"
-    cp -R "$INSTALL_DIR"/* "$BACKUP_PATH/" 2>/dev/null || true
+    # ponytail: loop excludes backups/ to prevent recursive duplication
+    for item in "$INSTALL_DIR"/*; do
+      if [ "$(basename "$item")" != "backups" ]; then
+        cp -R "$item" "$BACKUP_PATH/" 2>/dev/null || true
+      fi
+    done
     echo "  Backup hoàn tất."
     # ponytail: keep 5 most recent backups, delete older
     prune_backups
