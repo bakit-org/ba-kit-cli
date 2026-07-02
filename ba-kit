@@ -14,6 +14,8 @@ MANIFEST_FILE="$INSTALL_DIR/ba-kit/release-manifest.json"
 BIN_DIR="$HOME/.local/bin"
 
 # === ENTRY POINT ===
+# ponytail: portable lowercase — macOS bash 3.2 doesn't support ${var,,}
+lowercase() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
 main() {
   case "${1:-}" in
     install)   shift; cmd_install "$@" ;;
@@ -189,7 +191,7 @@ check_already_installed() {
       echo "Phiên bản ${SELECTED_VERSION} đã được cài đặt."
       echo ""
       read -r -p "Bạn có muốn cài lại không? (y/N): " confirm
-      if [ "${confirm,,}" != "y" ]; then
+      if [ "$(lowercase "$confirm")" != "y" ]; then
         echo "Đã hủy."
         exit 0
       fi
@@ -627,7 +629,7 @@ cmd_update() {
 
   # Xác nhận
   read -r -p "Cập nhật lên ${latest}? (Y/n): " confirm
-  if [ "${confirm,,}" = "n" ]; then
+  if [ "$(lowercase "$confirm")" = "n" ]; then
     echo "Đã hủy."
     exit 0
   fi
@@ -748,7 +750,7 @@ cmd_uninstall() {
   echo ""
 
   read -r -p "Bạn có chắc muốn tiếp tục? (y/N): " confirm
-  if [ "${confirm,,}" != "y" ]; then
+  if [ "$(lowercase "$confirm")" != "y" ]; then
     echo "Đã hủy."
     exit 0
   fi
