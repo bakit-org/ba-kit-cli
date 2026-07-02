@@ -456,9 +456,16 @@ post_install() {
   echo "Đang hoàn tất cài đặt..."
 
   if [ -f "$EXTRACT_DIR/.local/bin/ba-kit" ]; then
-    mkdir -p "$BIN_DIR"
-    cp "$EXTRACT_DIR/.local/bin/ba-kit" "$BIN_DIR/ba-kit"
-    chmod +x "$BIN_DIR/ba-kit"
+    mkdir -p "$INSTALL_DIR/ba-kit"
+    cp "$EXTRACT_DIR/.local/bin/ba-kit" "$INSTALL_DIR/ba-kit/ba-kit"
+    chmod +x "$INSTALL_DIR/ba-kit/ba-kit"
+
+    # Also update .local/bin if the symlink is us (npm), to avoid framework shadowing
+    if [ -L "$BIN_DIR/ba-kit" ] || [ ! -f "$BIN_DIR/ba-kit" ]; then
+      mkdir -p "$BIN_DIR"
+      cp "$EXTRACT_DIR/.local/bin/ba-kit" "$BIN_DIR/ba-kit"
+      chmod +x "$BIN_DIR/ba-kit"
+    fi
   fi
 
   register_hooks
@@ -482,34 +489,81 @@ register_hooks() {
 
   [ ! -d "$hooks_dir" ] && return
 
-  echo "  Đang đăng ký hooks..."
+  echo "  Dang dang ky hooks..."
 
   if [ ! -f "$settings" ]; then
     echo '{}' > "$settings"
   fi
 
-  python3 -c "
-import json, os
+  python3 << 'PYEOF'
+import json, os, re
 
-settings_path = '$settings'
-hooks_dir = '$hooks_dir'
+settings_path = "$settings"
+hooks_dir = "$hooks_dir"
 
 with open(settings_path) as f:
     settings = json.load(f)
 
-if 'hooks' not in settings:
-    settings['hooks'] = {}
+if "hooks" not in settings:
+    settings["hooks"] = {}
 
-hooks_obj = settings['hooks']
+hooks_obj = settings["hooks"]
 hook_count = 0
 
-# Clean old top-level hook entries left by buggy register_hooks
-valid_events = {'SessionStart', 'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop'}
+# Clean old top-level entries from buggy register_hooks
+valid_events = {"SessionStart", "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"}
 for key in list(hooks_obj.keys()):
     if key not in valid_events:
         del hooks_obj[key]
 
-# Clean stale hooks whose files no longer exist
+for hook_file in sorted(os.listdir(hooks_dir)):
+    if not hook_file.endswith(".sh"):
+        continue
+    hook_name = hook_file.replace(".sh", "")
+    hook_path = os.path.join(hooks_dir, hook_file)
+
+    if "preflight" in hook_name and "context" not in hook_name:
+        event, matcher = "UserPromptSubmit", ""
+    elif "audit" in hook_name and "context-audit" in hook_name:
+        event, matcher = "Stop", ""
+    elif "context-preflight" in hook_name or "preflight-guard" in hook_name:
+        event, matcher = "PreToolUse", "Read|Glob"
+    elif "context-output" in hook_name or "output-guard" in hook_name:
+        event, matcher = "PostToolUse", "Bash|Read|Grep|Glob"
+    elif "write-scope" in hook_name:
+        event, matcher = "PreToolUse", "Write|Edit"
+    elif "postwrite" in hook_name:
+        event, matcher = "PostToolUse", "Write|Edit"
+    elif "index-validation" in hook_name:
+        event, matcher = "PostToolUse", "Write|Edit"
+    else:
+        continue
+
+    if event not in hooks_obj:
+        hooks_obj[event] = []
+    if not isinstance(hooks_obj[event], list):
+        hooks_obj[event] = []
+
+    entry = {
+        "matcher": matcher,
+        "hooks": [{
+            "type": "command",
+            "command": "bash \"" + hook_path + "\""
+        }]
+    }
+
+    already = False
+    for ex in hooks_obj[event]:
+        for h in ex.get("hooks", []):
+            if hook_name in h.get("command", ""):
+                already = True
+    if already:
+        continue
+
+    hooks_obj[event].append(entry)
+    hook_count += 1
+
+# Clean stale hooks pointing to deleted files
 for event in valid_events:
     if event not in hooks_obj or not isinstance(hooks_obj[event], list):
         continue
@@ -517,78 +571,25 @@ for event in valid_events:
     for entry in hooks_obj[event]:
         if not isinstance(entry, dict):
             continue
-        valid_entry = False
-        for h in entry.get('hooks', []):
-            cmd = h.get('command', '')
-            # Extract file path from bash ".../path"
-            import re
-            m = re.search(r'bash\s+"([^"]+)"', cmd)
+        ok = False
+        for h in entry.get("hooks", []):
+            cmd = h.get("command", "")
+            m = re.search(r'bash "([^"]+)"', cmd)
             if m and os.path.isfile(m.group(1)):
-                valid_entry = True
+                ok = True
                 break
-        if valid_entry:
+        if ok:
             cleaned.append(entry)
     hooks_obj[event] = cleaned
 
-for hook_file in sorted(os.listdir(hooks_dir)):
-    if not hook_file.endswith('.sh'):
-        continue
-    hook_name = hook_file.replace('.sh', '')
-    hook_path = os.path.join(hooks_dir, hook_file)
-
-    # Map hook name → event + matcher
-    if 'preflight' in hook_name and 'context' not in hook_name:
-        event, matcher = 'UserPromptSubmit', ''
-    elif 'audit' in hook_name and 'context-audit' in hook_name:
-        event, matcher = 'Stop', ''
-    elif 'context-preflight' in hook_name or 'preflight-guard' in hook_name:
-        event, matcher = 'PreToolUse', 'Read|Glob'
-    elif 'context-output' in hook_name or 'output-guard' in hook_name:
-        event, matcher = 'PostToolUse', 'Bash|Read|Grep|Glob'
-    elif 'write-scope' in hook_name:
-        event, matcher = 'PreToolUse', 'Write|Edit'
-    elif 'postwrite' in hook_name:
-        event, matcher = 'PostToolUse', 'Write|Edit'
-    elif 'index-validation' in hook_name:
-        event, matcher = 'PostToolUse', 'Write|Edit'
-    else:
-        continue
-
-    # Get or create event array
-    if event not in hooks_obj:
-        hooks_obj[event] = []
-    if not isinstance(hooks_obj[event], list):
-        hooks_obj[event] = []
-
-    # Build hook entry
-    entry = {
-        'matcher': matcher,
-        'hooks': [{
-            'type': 'command',
-            'command': f'bash \"{hook_path}\"'
-        }]
-    }
-
-    # Check if already registered (avoid duplicates)
-    already_registered = False
-    for existing in hooks_obj[event]:
-        for h in existing.get('hooks', []):
-            if hook_name in h.get('command', ''):
-                already_registered = True
-                break
-    if already_registered:
-        continue
-
-    hooks_obj[event].append(entry)
-    hook_count += 1
-
-with open(settings_path, 'w') as f:
+with open(settings_path, "w") as f:
     json.dump(settings, f, indent=2, ensure_ascii=False)
-    f.write('\n')
+    f.write("\n")
 
-print(f'  Registered {hook_count} hooks')
-" 2>/dev/null || echo "  Warning: Không thể đăng ký hooks (cần python3)"
+print(f"  Registered {hook_count} hooks")
+PYEOF
 }
+
 
 # ============================================================
 # B10: LƯU VERSION + PRODUCT + MANIFEST
