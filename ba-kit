@@ -333,6 +333,16 @@ download_release() {
   fi
 }
 
+# ponytail: shared copy logic — excludes backups/ from source to prevent recursive bloat
+_copy_safe() {
+  local src="$1" dst="$2"
+  for item in "$src"/*; do
+    if [ "$(basename "$item")" != "backups" ]; then
+      cp -R "$item" "$dst/" 2>/dev/null || true
+    fi
+  done
+}
+
 # ============================================================
 # B6: BACKUP
 # ============================================================
@@ -342,12 +352,7 @@ do_backup() {
     mkdir -p "$BACKUP_PATH"
     echo "Đang backup ~/.claude/ hiện tại vào:"
     echo "  ${BACKUP_PATH}"
-    # ponytail: loop excludes backups/ to prevent recursive duplication
-    for item in "$INSTALL_DIR"/*; do
-      if [ "$(basename "$item")" != "backups" ]; then
-        cp -R "$item" "$BACKUP_PATH/" 2>/dev/null || true
-      fi
-    done
+    _copy_safe "$INSTALL_DIR" "$BACKUP_PATH"
     echo "  Backup hoàn tất."
     # ponytail: keep 5 most recent backups, delete older
     prune_backups
@@ -932,7 +937,7 @@ cmd_uninstall() {
   local backup_path="${BACKUP_DIR}/pre-uninstall-$(date +%Y-%m-%d-%H%M%S)"
   mkdir -p "$backup_path"
   if [ -d "$INSTALL_DIR" ]; then
-    cp -R "$INSTALL_DIR"/* "$backup_path/" 2>/dev/null || true
+    _copy_safe "$INSTALL_DIR" "$backup_path"
     echo "Đã backup vào: ${backup_path}"
   fi
 
