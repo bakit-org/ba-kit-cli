@@ -333,6 +333,22 @@ do_backup() {
     echo "  ${BACKUP_PATH}"
     cp -R "$INSTALL_DIR"/* "$BACKUP_PATH/" 2>/dev/null || true
     echo "  Backup hoàn tất."
+    # ponytail: keep 5 most recent backups, delete older
+    prune_backups
+  fi
+}
+
+prune_backups() {
+  local keep="${1:-5}"
+  local count
+  count=$(ls -1d "$BACKUP_DIR"/*/ 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$count" -gt "$keep" ]; then
+    local deleted=0
+    while IFS= read -r -d '' dir; do
+      rm -rf "$dir"
+      ((deleted++))
+    done < <(ls -1dt "$BACKUP_DIR"/*/ 2>/dev/null | tail -n +$((keep + 1)) | tr '\n' '\0')
+    echo "  Đã dọn ${deleted} backup cũ (giữ ${keep} gần nhất)."
   fi
 }
 
