@@ -33,6 +33,11 @@ main() {
       usage
       ;;
     *)
+      # Forward unknown commands to the framework ba-kit if installed
+      local framework_bin="$HOME/.local/bin/ba-kit"
+      if [ -x "$framework_bin" ] && [ "$framework_bin" != "$0" ]; then
+        exec "$framework_bin" "$@"
+      fi
       echo "BA-kit CLI — AI-powered Business Analyst toolkit for Claude Code"
       echo ""
       echo "Commands:"
