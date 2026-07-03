@@ -5,6 +5,13 @@ set -euo pipefail
 # BA-kit CLI — AI-powered Business Analyst toolkit for Claude Code
 # ============================================================
 
+# ponytail: when invoked via cmd.exe or PowerShell on Windows, $HOME may be
+# a Windows path (C:\Users\...). Normalize to Unix format so all path
+# operations work correctly in bash.
+if command -v cygpath &>/dev/null; then
+  HOME=$(cygpath -u "$HOME" 2>/dev/null || echo "$HOME")
+fi
+
 # === CONFIG ===
 INSTALL_DIR="$HOME/.claude"
 BACKUP_DIR="$INSTALL_DIR/backups"
@@ -94,13 +101,33 @@ parse_runtime_flag() {
   done
 }
 
-BA_KIT_SKILL_NAMES=(ba-collab ba-content-audit ba-do ba-figma-sync
-  ba-impact ba-next ba-notion ba-start
-  ba-stitch-sync brainstorm qc-uc-review reverse-web)
+# ponytail: single source of truth for BA-kit-owned skill/rule filenames —
+# do_backup() and cmd_uninstall() must both scope to exactly these paths, not
+# the whole ~/.claude tree. Keeping one shared list avoids the rules/ba-kit
+# path-mismatch bug (fixed in 1.1.13) from recurring in a second call site.
+BA_KIT_SKILLS=(
+  ba-collab ba-content-audit ba-do ba-figma-sync ba-impact
+  ba-next ba-notion ba-start
+  ba-stitch-sync brainstorm qc-uc-review reverse-web
+)
+BA_KIT_RULES=(
+  ba-quality-standards.md ba-workflow.md brainstorm-approval-gate.md
+  brainstorm-changelog.md brainstorm-conventions.md brainstorm-keyword-detection.md
+  brainstorm-naming-conventions.md brainstorm-resolve-oqs.md
+)
 
 # === ENTRY POINT ===
 # ponytail: portable lowercase — macOS bash 3.2 doesn't support ${var,,}
 lowercase() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# ponytail: portable sha256 — stock macOS has no sha256sum, only shasum -a 256
+sha256() {
+  if command -v sha256sum &>/dev/null; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
 main() {
   case "${1:-}" in
     install)   shift; cmd_install "$@" ;;
@@ -114,7 +141,7 @@ main() {
     *)
       # Forward to framework ba-kit for all BA operations
       local framework_bin=""
-      for candidate in "$HOME/.local/bin/ba-kit" "$HOME/.claude/ba-kit/scripts/ba-kit"; do
+      for candidate in "$HOME/.claude/ba-kit/ba-kit" "$HOME/.local/bin/ba-kit" "$HOME/.claude/ba-kit/scripts/ba-kit"; do
         if [ -x "$candidate" ] && [ "$(realpath "$candidate" 2>/dev/null || echo "$candidate")" != "$(realpath "$0" 2>/dev/null || echo "$0")" ]; then
           framework_bin="$candidate"
           break
@@ -429,7 +456,7 @@ download_release() {
 
     local expected actual
     expected=$(cut -d' ' -f1 "$checksum_file")
-    actual=$(sha256sum "$ARCHIVE_FILE" | cut -d' ' -f1)
+    actual=$(sha256 "$ARCHIVE_FILE")
 
     if [ "$expected" != "$actual" ]; then
       echo "Lỗi: File tải về bị lỗi (checksum không khớp)."
@@ -443,14 +470,72 @@ download_release() {
   fi
 }
 
-# ponytail: shared copy logic — excludes backups/ from source to prevent recursive bloat
-_copy_safe() {
+# ponytail: enumerate exactly the agents/ or templates/ files THIS install
+# placed, from release-manifest.json (the same source merge_files() already
+# uses for hash comparison) — not a hardcoded list that drifts every time the
+# content package adds/removes files, and not a whole-directory guess that
+# risks touching the user's own unrelated agents/templates (which happened
+# for real: uninstall's old rm -rf "$INSTALL_DIR/agents" deleted a user's 12
+# personal agent files alongside BA-kit's own 4).
+_ba_kit_manifest_rel_paths() {
+  local manifest_file="$1" prefix="$2"  # prefix: "agents" or "templates"
+  [ -f "$manifest_file" ] || return 0
+  # ponytail: ltrimstr(), not a sub()/regex with backslashes — Git Bash/MSYS
+  # mangles backslash counts in argv passed to native jq.exe on Windows (same
+  # class of bug as the POSIX-path issue fixed elsewhere via to_native()), so
+  # any \. here silently becomes an "Invalid escape" jq compile error and this
+  # whole function returns nothing without visibly failing the install.
+  jq -r --arg p "./.claude/$prefix/" '
+    keys[] | select(startswith($p)) | ltrimstr("./.claude/")
+  ' "$manifest_file" 2>/dev/null
+}
+
+# ponytail: copy only the paths BA-kit itself owns/touches, not the whole
+# ~/.claude tree. ~/.claude can hold gigabytes of unrelated Claude Code state
+# (other skills, cache, session history) — measured 55s+ just to cp -R a real
+# user's skills/ dir alone, which made every install/uninstall feel stuck.
+_copy_scoped() {
   local src="$1" dst="$2"
-  for item in "$src"/*; do
-    if [ "$(basename "$item")" != "backups" ]; then
-      cp -R "$item" "$dst/" 2>/dev/null || true
-    fi
+  local manifest="$src/ba-kit/release-manifest.json"
+
+  [ -e "$src/ba-kit" ] && { cp -R "$src/ba-kit" "$dst/" 2>/dev/null || true; }
+  [ -e "$src/core" ] && { cp -R "$src/core" "$dst/" 2>/dev/null || true; }
+  [ -f "$src/settings.json" ] && { cp "$src/settings.json" "$dst/" 2>/dev/null || true; }
+
+  for prefix in agents templates; do
+    local rel_paths
+    rel_paths=$(_ba_kit_manifest_rel_paths "$manifest" "$prefix")
+    [ -z "$rel_paths" ] && continue
+    while IFS= read -r rel; do
+      [ -z "$rel" ] && continue
+      [ -f "$src/$rel" ] || continue
+      mkdir -p "$dst/$(dirname "$rel")"
+      cp "$src/$rel" "$dst/$rel" 2>/dev/null || true
+    done <<< "$rel_paths"
   done
+
+  if [ -d "$src/skills" ]; then
+    mkdir -p "$dst/skills"
+    for skill in "${BA_KIT_SKILLS[@]}"; do
+      [ -d "$src/skills/$skill" ] && { cp -R "$src/skills/$skill" "$dst/skills/" 2>/dev/null || true; }
+    done
+  fi
+
+  if [ -d "$src/rules" ]; then
+    mkdir -p "$dst/rules"
+    for rule_file in "${BA_KIT_RULES[@]}"; do
+      [ -f "$src/rules/$rule_file" ] && { cp "$src/rules/$rule_file" "$dst/rules/" 2>/dev/null || true; }
+    done
+  fi
+
+  if [ -d "$src/hooks" ]; then
+    mkdir -p "$dst/hooks"
+    for hook_file in "$src/hooks"/guardrail-*.sh "$src/hooks/postwrite-guardrail.sh"; do
+      [ -f "$hook_file" ] && { cp "$hook_file" "$dst/hooks/" 2>/dev/null || true; }
+    done
+  fi
+
+  return 0
 }
 
 # ============================================================
@@ -478,7 +563,7 @@ prune_backups() {
     local deleted=0
     while IFS= read -r -d '' dir; do
       rm -rf "$dir"
-      ((deleted++))
+      deleted=$((deleted + 1))
     done < <(ls -1dt "$backup_dir"/*/ 2>/dev/null | tail -n +$((keep + 1)) | tr '\n' '\0')
     echo "  Đã dọn ${deleted} backup cũ (giữ ${keep} gần nhất)."
   fi
@@ -531,31 +616,31 @@ merge_files() {
     if [ ! -f "$dest_file" ]; then
       mkdir -p "$(dirname "$dest_file")"
       cp "$src_file" "$dest_file"
-      ((created++))
+      created=$((created + 1))
       continue
     fi
 
     if $force; then
       cp "$src_file" "$dest_file"
-      ((updated++))
+      updated=$((updated + 1))
       continue
     fi
 
     if is_protected "$rel_path"; then
-      ((preserved++))
+      preserved=$((preserved + 1))
       continue
     fi
 
     local old_hash new_hash current_hash
     old_hash=$(echo "$old_manifest" | jq -r ".\"$rel_path\" // empty" 2>/dev/null)
-    new_hash=$(sha256sum "$src_file" | cut -d' ' -f1)
-    current_hash=$(sha256sum "$dest_file" | cut -d' ' -f1)
+    new_hash=$(sha256 "$src_file")
+    current_hash=$(sha256 "$dest_file")
 
     if [ "$old_hash" = "$current_hash" ] || [ "$new_hash" = "$current_hash" ]; then
       cp "$src_file" "$dest_file"
-      ((updated++))
+      updated=$((updated + 1))
     else
-      ((preserved++))
+      preserved=$((preserved + 1))
     fi
   done < <(find "$src" -print0)
 
@@ -583,11 +668,12 @@ post_install() {
     cp "$EXTRACT_DIR/.local/bin/ba-kit" "$root/ba-kit/ba-kit"
     chmod +x "$root/ba-kit/ba-kit"
 
-    # Overwrite .local/bin/ba-kit with framework binary — whatever was
-    # there before (npm symlink, stale framework) gets replaced.
-    mkdir -p "$BIN_DIR"
-    cp "$EXTRACT_DIR/.local/bin/ba-kit" "$BIN_DIR/ba-kit"
-    chmod +x "$BIN_DIR/ba-kit"
+    # Remove stale framework binary at ~/.local/bin/ba-kit so it no longer
+    # shadows the npm-installed CLI wrapper in PATH.
+    if [ -f "$BIN_DIR/ba-kit" ] && ! [ -L "$BIN_DIR/ba-kit" ]; then
+      rm -f "$BIN_DIR/ba-kit"
+      echo "  Removed stale framework binary at ${BIN_DIR}/ba-kit (was shadowing npm CLI)"
+    fi
   fi
 
   register_hooks "$root"
@@ -618,10 +704,21 @@ register_hooks() {
     echo '{}' > "$settings"
   fi
 
-  python3 << PYEOF
+  PYTHONIOENCODING=utf-8 python3 << PYEOF
 import json, os, re
 
-settings_path = "$settings"
+def to_native(p):
+    # bash on Windows (Git Bash/MSYS) hands us POSIX-style paths like
+    # /c/Users/... . Native Windows python3 (python.org, not MSYS python)
+    # cannot resolve those in open()/os.listdir()/os.path.isfile() — only
+    # os.name == "nt" needs the C:/... rewrite; POSIX python passes through.
+    if os.name == "nt":
+        m = re.match(r"^/([a-zA-Z])/(.*)$", p)
+        if m:
+            return f"{m.group(1)}:/{m.group(2)}"
+    return p
+
+settings_path = to_native("$settings")
 hooks_dir = "$hooks_dir"
 
 with open(settings_path) as f:
@@ -639,7 +736,7 @@ for key in list(hooks_obj.keys()):
     if key not in valid_events:
         del hooks_obj[key]
 
-for hook_file in sorted(os.listdir(hooks_dir)):
+for hook_file in sorted(os.listdir(to_native(hooks_dir))):
     if not hook_file.endswith(".sh"):
         continue
     hook_name = hook_file.replace(".sh", "")
@@ -698,7 +795,7 @@ for event in valid_events:
         for h in entry.get("hooks", []):
             cmd = h.get("command", "")
             m = re.search(r'bash "([^"]+)"', cmd)
-            if m and os.path.isfile(m.group(1)):
+            if m and os.path.isfile(to_native(m.group(1))):
                 ok = True
                 break
         if ok:
@@ -718,10 +815,19 @@ clean_hooks_json() {
   local settings="$HOME/.claude/settings.json"
   [ ! -f "$settings" ] && return
 
-  python3 << PYEOF
+  PYTHONIOENCODING=utf-8 python3 << PYEOF
 import json, os, re
 
-settings_path = "$settings"
+def to_native(p):
+    # See register_hooks() to_native() — same POSIX-vs-native-Windows-python
+    # path mismatch applies here.
+    if os.name == "nt":
+        m = re.match(r"^/([a-zA-Z])/(.*)$", p)
+        if m:
+            return f"{m.group(1)}:/{m.group(2)}"
+    return p
+
+settings_path = to_native("$settings")
 
 with open(settings_path) as f:
     settings = json.load(f)
@@ -744,7 +850,7 @@ for event in valid_events:
         for h in entry.get("hooks", []):
             cmd = h.get("command", "")
             m = re.search(r'bash "([^"]+)"', cmd)
-            if m and os.path.isfile(m.group(1)):
+            if m and os.path.isfile(to_native(m.group(1))):
                 ok = True
                 break
         if ok:
@@ -1305,25 +1411,40 @@ cmd_uninstall() {
     local root scope label backup_dir backup_path
     root=$(runtime_root_for_key "$key")
     scope=$(runtime_scope_for_key "$key")
-    label=$(runtime_label_for_key "$key")
-    backup_dir=$(runtime_backup_dir "$key")
-    backup_path="${backup_dir}/pre-uninstall-$(date +%Y-%m-%d-%H%M%S)"
-
     echo "-- ${label} (${root}) --"
 
     if [ "$scope" = "full" ]; then
       mkdir -p "$backup_path"
       if [ -d "$root" ]; then
-        _copy_safe "$root" "$backup_path"
+        _copy_scoped "$root" "$backup_path"
         echo "Đã backup vào: ${backup_path}"
       fi
 
-      for skill in "${BA_KIT_SKILL_NAMES[@]}"; do
+      for skill in "${BA_KIT_SKILLS[@]}"; do
         rm -rf "$root/skills/$skill" 2>/dev/null || true
       done
-      rm -rf "$root/agents" 2>/dev/null || true
-      rm -rf "$root/rules/ba-kit" 2>/dev/null || true
-      rm -rf "$root/templates" 2>/dev/null || true
+
+      local agent_rel_paths templates_rel_paths
+      agent_rel_paths=$(_ba_kit_manifest_rel_paths "$(runtime_manifest_file "$key")" agents)
+      templates_rel_paths=$(_ba_kit_manifest_rel_paths "$(runtime_manifest_file "$key")" templates)
+
+      if [ -n "$agent_rel_paths" ]; then
+        while IFS= read -r rel; do
+          [ -n "$rel" ] && rm -f "$root/$rel" 2>/dev/null || true
+        done <<< "$agent_rel_paths"
+      fi
+
+      for rule_file in "${BA_KIT_RULES[@]}"; do
+        rm -f "$root/rules/$rule_file" 2>/dev/null || true
+      done
+
+      if [ -n "$templates_rel_paths" ]; then
+        while IFS= read -r rel; do
+          [ -n "$rel" ] && rm -f "$root/$rel" 2>/dev/null || true
+        done <<< "$templates_rel_paths"
+        find "$root/templates" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+      fi
+
       rm -rf "$root/ba-kit" 2>/dev/null || true
       rm -f "$root/core" 2>/dev/null || true
       rm -f "$root/hooks"/guardrail-*.sh 2>/dev/null || true
@@ -1338,7 +1459,7 @@ cmd_uninstall() {
         echo "Đã backup vào: ${backup_path}"
       fi
 
-      for skill in "${BA_KIT_SKILL_NAMES[@]}"; do
+      for skill in "${BA_KIT_SKILLS[@]}"; do
         rm -rf "$root/skills/$skill" 2>/dev/null || true
       done
       rm -rf "$root/ba-kit" 2>/dev/null || true
