@@ -1411,6 +1411,9 @@ cmd_uninstall() {
     local root scope label backup_dir backup_path
     root=$(runtime_root_for_key "$key")
     scope=$(runtime_scope_for_key "$key")
+    label=$(runtime_label_for_key "$key")
+    backup_dir=$(runtime_backup_dir "$key")
+    backup_path="${backup_dir}/pre-uninstall-$(date +%Y-%m-%d-%H%M%S)"
     echo "-- ${label} (${root}) --"
 
     if [ "$scope" = "full" ]; then
