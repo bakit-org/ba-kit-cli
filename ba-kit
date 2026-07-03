@@ -95,7 +95,7 @@ parse_runtime_flag() {
 }
 
 BA_KIT_SKILL_NAMES=(ba-collab ba-content-audit ba-do ba-figma-sync
-  ba-impact ba-kit-update ba-next ba-notion ba-qc-export ba-start
+  ba-impact ba-next ba-notion ba-start
   ba-stitch-sync brainstorm qc-uc-review reverse-web)
 
 # === ENTRY POINT ===
