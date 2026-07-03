@@ -30,7 +30,7 @@ PRODUCT_URLS=(
 # bash script has no reliable path-independent way to read package.json at
 # runtime (npm global installs, npx, and symlinked ~/.local/bin/ba-kit all
 # resolve differently), so this is a deliberate duplicated constant.
-CLI_VERSION="1.2.1"
+CLI_VERSION="1.2.2"
 
 RUNTIME_KEYS=("claude" "codex" "agy")
 RUNTIME_LABELS=("Claude Code" "Codex CLI" "Antigravity IDE")
@@ -537,6 +537,13 @@ _copy_scoped() {
 
   return 0
 }
+
+# ponytail: _copy_safe was renamed to _copy_scoped during the 1.1.13 scoped-
+# backup fix. This wrapper keeps old call sites working — every call goes
+# through the manifest-based scoped copy path, avoiding the original bug
+# where backing up the whole ~/.claude tree could copy gigabytes of
+# unrelated data (session history, cache, other skills).
+_copy_safe() { _copy_scoped "$@"; }
 
 # ============================================================
 # B6: BACKUP
