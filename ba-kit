@@ -19,6 +19,85 @@ PRODUCT_URLS=(
   "https://polar.sh/bakit-org/products/ba-kit-solo-pro"
 )
 
+# Bumped by hand alongside package.json's "version" on every release — the
+# bash script has no reliable path-independent way to read package.json at
+# runtime (npm global installs, npx, and symlinked ~/.local/bin/ba-kit all
+# resolve differently), so this is a deliberate duplicated constant.
+CLI_VERSION="1.2.0"
+
+RUNTIME_KEYS=("claude" "codex" "agy")
+RUNTIME_LABELS=("Claude Code" "Codex CLI" "Antigravity IDE")
+RUNTIME_ROOTS=("$HOME/.claude" "$HOME/.codex" "$HOME/.gemini/config")
+RUNTIME_SCOPES=("full" "skills" "skills")
+
+runtime_index_for_key() {   # $1=key -> echoes index or returns 1
+  local key="$1"
+  for i in "${!RUNTIME_KEYS[@]}"; do
+    if [ "${RUNTIME_KEYS[$i]}" = "$key" ]; then
+      echo "$i"
+      return 0
+    fi
+  done
+  return 1
+}
+
+runtime_root_for_key()  { local i; i=$(runtime_index_for_key "$1") && echo "${RUNTIME_ROOTS[$i]}"; }
+runtime_label_for_key() { local i; i=$(runtime_index_for_key "$1") && echo "${RUNTIME_LABELS[$i]}"; }
+runtime_scope_for_key() { local i; i=$(runtime_index_for_key "$1") && echo "${RUNTIME_SCOPES[$i]}"; }
+
+runtime_version_file()  { echo "$(runtime_root_for_key "$1")/ba-kit/VERSION"; }
+runtime_product_file()  { echo "$(runtime_root_for_key "$1")/ba-kit/PRODUCT"; }
+runtime_manifest_file() { echo "$(runtime_root_for_key "$1")/ba-kit/release-manifest.json"; }
+runtime_backup_dir() {
+  local key="$1"
+  if [ "$key" = "claude" ]; then
+    echo "$BACKUP_DIR"
+  else
+    echo "$(runtime_root_for_key "$key")/ba-kit/backups"
+  fi
+}
+
+# Parses "$1" (comma-list or empty) into global SELECTED_RUNTIME_KEYS array.
+# Exits 1 on unknown key or empty token. Default (empty input) = claude only.
+parse_runtime_flag() {
+  # No default here — callers decide the default (cmd_install passes
+  # "claude" when --runtime is omitted; cmd_uninstall skips calling this
+  # entirely when --runtime is omitted, using auto-detect instead). An
+  # explicitly empty "$1" (e.g. `--runtime ""`) is always an error.
+  local raw="$1"
+  SELECTED_RUNTIME_KEYS=()
+  if [ -z "$raw" ]; then
+    echo "Lỗi: --runtime chứa giá trị rỗng."
+    echo "Runtime hợp lệ: ${RUNTIME_KEYS[*]}"
+    exit 1
+  fi
+  local IFS=','
+  local -a tokens=($raw)
+  local seen=""
+  for tok in "${tokens[@]}"; do
+    tok="$(echo "$tok" | tr -d '[:space:]')"
+    if [ -z "$tok" ]; then
+      echo "Lỗi: --runtime chứa giá trị rỗng."
+      echo "Runtime hợp lệ: ${RUNTIME_KEYS[*]}"
+      exit 1
+    fi
+    if ! runtime_index_for_key "$tok" >/dev/null; then
+      echo "Lỗi: runtime '$tok' không hợp lệ."
+      echo "Runtime hợp lệ: ${RUNTIME_KEYS[*]}"
+      exit 1
+    fi
+    case ",$seen," in
+      *",$tok,"*) continue ;;
+    esac
+    seen="${seen:+$seen,}$tok"
+    SELECTED_RUNTIME_KEYS+=("$tok")
+  done
+}
+
+BA_KIT_SKILL_NAMES=(ba-collab ba-content-audit ba-do ba-figma-sync
+  ba-impact ba-kit-update ba-next ba-notion ba-qc-export ba-start
+  ba-stitch-sync brainstorm qc-uc-review reverse-web)
+
 # === ENTRY POINT ===
 # ponytail: portable lowercase — macOS bash 3.2 doesn't support ${var,,}
 lowercase() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
@@ -28,7 +107,7 @@ main() {
     update)    cmd_update ;;
     doctor)    cmd_doctor ;;
     version)   cmd_version ;;
-    uninstall) cmd_uninstall ;;
+    uninstall) shift; cmd_uninstall "$@" ;;
     help|--help|-h)
       usage
       ;;
@@ -47,12 +126,19 @@ main() {
       echo "BA-kit CLI — chưa cài framework. Chạy: ba-kit install"
       echo ""
       echo "Commands:"
-      echo "  ba-kit install              Cài đặt BA-kit lần đầu"
-      echo "  ba-kit install --version X  Cài version cụ thể (vd: v1.2.0)"
-      echo "  ba-kit update               Cập nhật lên phiên bản mới nhất"
-      echo "  ba-kit doctor               Kiểm tra trạng thái cài đặt"
-      echo "  ba-kit version              Hiển thị phiên bản đã cài"
-      echo "  ba-kit uninstall            Gỡ cài đặt (có backup)"
+      echo "  ba-kit install                     Cài đặt BA-kit lần đầu"
+      echo "  ba-kit install --version X         Cài version cụ thể (vd: v1.2.0)"
+      echo "  ba-kit install --runtime <list>    Chọn runtime: claude,codex,agy (mặc định: claude)"
+      echo "  ba-kit update                      Cập nhật lên phiên bản mới nhất (mọi runtime đã cài)"
+      echo "  ba-kit doctor                      Kiểm tra trạng thái cài đặt"
+      echo "  ba-kit version                     Hiển thị phiên bản CLI + từng runtime đã cài"
+      echo "  ba-kit uninstall                   Gỡ cài đặt (có backup)"
+      echo "  ba-kit uninstall --runtime <list>  Chỉ gỡ runtime chỉ định (mặc định: tự phát hiện tất cả)"
+      echo ""
+      echo "Runtime hỗ trợ:"
+      echo "  claude  Claude Code — đầy đủ (skills, agents, hooks, templates)"
+      echo "  codex   Codex CLI — chỉ skills"
+      echo "  agy     Antigravity IDE — chỉ skills"
       echo ""
       echo "Các sản phẩm:"
       for i in "${!PRODUCT_NAMES[@]}"; do
@@ -66,12 +152,19 @@ usage() {
   echo "BA-kit CLI"
   echo ""
   echo "Commands:"
-  echo "  ba-kit install              Cài đặt BA-kit lần đầu"
-  echo "  ba-kit install --version X  Cài version cụ thể"
-  echo "  ba-kit update               Cập nhật lên phiên bản mới nhất"
-  echo "  ba-kit doctor               Kiểm tra trạng thái cài đặt"
-  echo "  ba-kit version              Hiển thị phiên bản đã cài"
-  echo "  ba-kit uninstall            Gỡ cài đặt (có backup)"
+  echo "  ba-kit install                     Cài đặt BA-kit lần đầu"
+  echo "  ba-kit install --version X         Cài version cụ thể"
+  echo "  ba-kit install --runtime <list>    Chọn runtime: claude,codex,agy (mặc định: claude)"
+  echo "  ba-kit update                      Cập nhật lên phiên bản mới nhất (mọi runtime đã cài)"
+  echo "  ba-kit doctor                      Kiểm tra trạng thái cài đặt"
+  echo "  ba-kit version                     Hiển thị phiên bản CLI + từng runtime đã cài"
+  echo "  ba-kit uninstall                   Gỡ cài đặt (có backup)"
+  echo "  ba-kit uninstall --runtime <list>  Chỉ gỡ runtime chỉ định (mặc định: tự phát hiện tất cả)"
+  echo ""
+  echo "Runtime hỗ trợ:"
+  echo "  claude  Claude Code — đầy đủ (skills, agents, hooks, templates)"
+  echo "  codex   Codex CLI — chỉ skills"
+  echo "  agy     Antigravity IDE — chỉ skills"
   echo ""
   echo "Các sản phẩm:"
   for i in "${!PRODUCT_NAMES[@]}"; do
@@ -243,18 +336,30 @@ select_version() {
 # ============================================================
 # B4: KIỂM TRA XUNG ĐỘT SẢN PHẨM
 # ============================================================
-check_cross_product() {
-  if [ ! -f "$PRODUCT_FILE" ]; then
+# Per-runtime conflict/version check, used by multi-runtime install.
+# Returns 0 = process this runtime, 1 = skip it (already up to date).
+# With exactly 1 runtime selected, behavior is byte-identical to
+# check_cross_product (same interactive reinstall prompt). With 2+
+# runtimes selected, an already-up-to-date runtime is skipped silently
+# instead of prompting once per runtime.
+check_cross_product_for_runtime() {
+  local key="$1"
+  local product_file version_file label
+  product_file=$(runtime_product_file "$key")
+  version_file=$(runtime_version_file "$key")
+  label=$(runtime_label_for_key "$key")
+
+  if [ ! -f "$product_file" ]; then
     return 0
   fi
 
   local existing_product
-  existing_product=$(cat "$PRODUCT_FILE")
+  existing_product=$(cat "$product_file")
 
   if [ "$existing_product" != "$SELECTED_PRODUCT" ]; then
     echo ""
     echo "=============================================="
-    echo "  PHÁT HIỆN XUNG ĐỘT SẢN PHẨM"
+    echo "  PHÁT HIỆN XUNG ĐỘT SẢN PHẨM (${label})"
     echo "=============================================="
     echo ""
     echo "Local đang cài: ${existing_product}"
@@ -262,19 +367,22 @@ check_cross_product() {
     echo ""
     echo "Không thể cài đè sản phẩm khác. Bạn cần gỡ ${existing_product} trước:"
     echo ""
-    echo "  ba-kit uninstall"
+    echo "  ba-kit uninstall --runtime ${key}"
     echo ""
     echo "Sau đó chạy lại:"
-    echo "  ba-kit install"
+    echo "  ba-kit install --runtime ${key}"
     echo "=============================================="
     exit 1
   fi
 
-  # Same product — check version
-  if [ -f "$VERSION_FILE" ]; then
+  if [ -f "$version_file" ]; then
     local current
-    current=$(cat "$VERSION_FILE")
+    current=$(cat "$version_file")
     if [ "$current" = "$SELECTED_VERSION" ]; then
+      if [ ${#SELECTED_RUNTIME_KEYS[@]} -gt 1 ]; then
+        echo "${label}: ${SELECTED_PRODUCT} ${SELECTED_VERSION} đã được cài đặt, bỏ qua."
+        return 1
+      fi
       echo "${SELECTED_PRODUCT} ${SELECTED_VERSION} đã được cài đặt."
       echo ""
       read -r -p "Bạn có muốn cài lại không? (y/N): " confirm
@@ -285,6 +393,8 @@ check_cross_product() {
       echo "Đang cài lại ${SELECTED_PRODUCT}..."
     fi
   fi
+
+  return 0
 }
 
 # ============================================================
@@ -347,28 +457,29 @@ _copy_safe() {
 # B6: BACKUP
 # ============================================================
 do_backup() {
-  if [ -d "$INSTALL_DIR" ] && [ "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
-    BACKUP_PATH="${BACKUP_DIR}/$(date +%Y-%m-%d-%H%M%S)"
+  local src_dir="$1" backup_dir="$2" keep="${3:-5}"
+  if [ -d "$src_dir" ] && [ "$(ls -A "$src_dir" 2>/dev/null)" ]; then
+    BACKUP_PATH="${backup_dir}/$(date +%Y-%m-%d-%H%M%S)"
     mkdir -p "$BACKUP_PATH"
-    echo "Đang backup ~/.claude/ hiện tại vào:"
+    echo "Đang backup ${src_dir} hiện tại vào:"
     echo "  ${BACKUP_PATH}"
-    _copy_safe "$INSTALL_DIR" "$BACKUP_PATH"
+    _copy_safe "$src_dir" "$BACKUP_PATH"
     echo "  Backup hoàn tất."
     # ponytail: keep 5 most recent backups, delete older
-    prune_backups
+    prune_backups "$backup_dir" "$keep"
   fi
 }
 
 prune_backups() {
-  local keep="${1:-5}"
+  local backup_dir="$1" keep="${2:-5}"
   local count
-  count=$(ls -1d "$BACKUP_DIR"/*/ 2>/dev/null | wc -l | tr -d ' ')
+  count=$(ls -1d "$backup_dir"/*/ 2>/dev/null | wc -l | tr -d ' ')
   if [ "$count" -gt "$keep" ]; then
     local deleted=0
     while IFS= read -r -d '' dir; do
       rm -rf "$dir"
       ((deleted++))
-    done < <(ls -1dt "$BACKUP_DIR"/*/ 2>/dev/null | tail -n +$((keep + 1)) | tr '\n' '\0')
+    done < <(ls -1dt "$backup_dir"/*/ 2>/dev/null | tail -n +$((keep + 1)) | tr '\n' '\0')
     echo "  Đã dọn ${deleted} backup cũ (giữ ${keep} gần nhất)."
   fi
 }
@@ -392,14 +503,15 @@ extract_release() {
 merge_files() {
   local src="$1"
   local dest="$2"
-  local force="${3:-false}"
+  local manifest_file="$3"
+  local force="${4:-false}"
 
   [ ! -d "$src" ] && return
 
   mkdir -p "$dest"
 
   local old_manifest="{}"
-  [ -f "$MANIFEST_FILE" ] && old_manifest=$(cat "$MANIFEST_FILE")
+  [ -f "$manifest_file" ] && old_manifest=$(cat "$manifest_file")
 
   local new_manifest="{}"
   local parent_manifest
@@ -463,12 +575,13 @@ is_protected() {
 # B9: POST-INSTALL
 # ============================================================
 post_install() {
+  local root="$1"
   echo "Đang hoàn tất cài đặt..."
 
   if [ -f "$EXTRACT_DIR/.local/bin/ba-kit" ]; then
-    mkdir -p "$INSTALL_DIR/ba-kit"
-    cp "$EXTRACT_DIR/.local/bin/ba-kit" "$INSTALL_DIR/ba-kit/ba-kit"
-    chmod +x "$INSTALL_DIR/ba-kit/ba-kit"
+    mkdir -p "$root/ba-kit"
+    cp "$EXTRACT_DIR/.local/bin/ba-kit" "$root/ba-kit/ba-kit"
+    chmod +x "$root/ba-kit/ba-kit"
 
     # Overwrite .local/bin/ba-kit with framework binary — whatever was
     # there before (npm symlink, stale framework) gets replaced.
@@ -477,24 +590,25 @@ post_install() {
     chmod +x "$BIN_DIR/ba-kit"
   fi
 
-  register_hooks
+  register_hooks "$root"
 
-  if [ -f "$INSTALL_DIR/ba-kit/scripts/requirements.txt" ]; then
+  if [ -f "$root/ba-kit/scripts/requirements.txt" ]; then
     if command -v python3 &>/dev/null; then
-      python3 -m pip install -r "$INSTALL_DIR/ba-kit/scripts/requirements.txt" --quiet 2>/dev/null || true
+      python3 -m pip install -r "$root/ba-kit/scripts/requirements.txt" --quiet 2>/dev/null || true
     fi
   fi
 
-  if [ -d "$INSTALL_DIR/ba-kit" ]; then
-    ln -sfn "$INSTALL_DIR/ba-kit" "$INSTALL_DIR/core" 2>/dev/null || true
+  if [ -d "$root/ba-kit" ]; then
+    ln -sfn "$root/ba-kit" "$root/core" 2>/dev/null || true
   fi
 
   echo "  Hoàn tất."
 }
 
 register_hooks() {
+  local root="$1"
   local settings="$HOME/.claude/settings.json"
-  local hooks_dir="$INSTALL_DIR/hooks"
+  local hooks_dir="$root/hooks"
 
   [ ! -d "$hooks_dir" ] && return
 
@@ -653,14 +767,15 @@ PYEOF
 # B10: LƯU VERSION + PRODUCT + MANIFEST
 # ============================================================
 save_state() {
+  local version_file="$1" product_file="$2" manifest_file="$3" extract_dir="$4"
   echo "Đang lưu thông tin..."
 
-  mkdir -p "$(dirname "$VERSION_FILE")"
-  echo "$SELECTED_VERSION" > "$VERSION_FILE"
-  echo "$SELECTED_PRODUCT" > "$PRODUCT_FILE"
+  mkdir -p "$(dirname "$version_file")"
+  echo "$SELECTED_VERSION" > "$version_file"
+  echo "$SELECTED_PRODUCT" > "$product_file"
 
-  if [ -f "$EXTRACT_DIR/release-manifest.json" ]; then
-    cp "$EXTRACT_DIR/release-manifest.json" "$MANIFEST_FILE"
+  if [ -f "$extract_dir/release-manifest.json" ]; then
+    cp "$extract_dir/release-manifest.json" "$manifest_file"
   fi
 }
 
@@ -677,29 +792,47 @@ cleanup() {
 # B12: HIỂN THỊ KẾT QUẢ
 # ============================================================
 show_result() {
+  # $@ = processed runtime keys
   echo ""
   echo "=============================================="
   echo "  CÀI ĐẶT THÀNH CÔNG!"
   echo "=============================================="
-  echo ""
-  echo "  Sản phẩm:   ${SELECTED_PRODUCT}"
-  echo "  Phiên bản:  ${SELECTED_VERSION}"
 
-  local skill_count agent_count template_count hook_count
-  skill_count=$(ls -1 "$INSTALL_DIR/skills/" 2>/dev/null | wc -l | tr -d ' ')
-  agent_count=$(ls -1 "$INSTALL_DIR/agents/" 2>/dev/null | wc -l | tr -d ' ')
-  template_count=$(ls -1 "$INSTALL_DIR/templates/" 2>/dev/null | wc -l | tr -d ' ')
-  hook_count=$(ls -1 "$INSTALL_DIR/hooks/" 2>/dev/null | wc -l | tr -d ' ')
+  for key in "$@"; do
+    local root scope label
+    root=$(runtime_root_for_key "$key")
+    scope=$(runtime_scope_for_key "$key")
+    label=$(runtime_label_for_key "$key")
 
-  echo "  Skills:     ${skill_count}"
-  echo "  Agents:     ${agent_count}"
-  echo "  Templates:  ${template_count}"
-  echo "  Hooks:      ${hook_count}"
-
-  if [ -n "${BACKUP_PATH:-}" ]; then
     echo ""
-    echo "  Backup cũ:  ${BACKUP_PATH}"
-  fi
+    echo "  -- ${label} (${root}) --"
+    echo "  Sản phẩm:   ${SELECTED_PRODUCT}"
+    echo "  Phiên bản:  ${SELECTED_VERSION}"
+
+    if [ "$scope" = "full" ]; then
+      local skill_count agent_count template_count hook_count
+      skill_count=$(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ')
+      agent_count=$(ls -1 "$root/agents/" 2>/dev/null | wc -l | tr -d ' ')
+      template_count=$(ls -1 "$root/templates/" 2>/dev/null | wc -l | tr -d ' ')
+      hook_count=$(ls -1 "$root/hooks/" 2>/dev/null | wc -l | tr -d ' ')
+      echo "  Skills:     ${skill_count}"
+      echo "  Agents:     ${agent_count}"
+      echo "  Templates:  ${template_count}"
+      echo "  Hooks:      ${hook_count}"
+    else
+      local skill_count
+      skill_count=$(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ')
+      echo "  Skills:     ${skill_count}"
+    fi
+
+    local backup_dir
+    backup_dir=$(runtime_backup_dir "$key")
+    local latest_backup
+    latest_backup=$(ls -1dt "$backup_dir"/*/ 2>/dev/null | head -1)
+    if [ -n "$latest_backup" ]; then
+      echo "  Backup cũ:  ${latest_backup}"
+    fi
+  done
 
   echo ""
   echo "  Bắt đầu sử dụng:"
@@ -719,6 +852,7 @@ show_result() {
 # ============================================================
 cmd_install() {
   local target_version="latest"
+  local target_runtime="claude"
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -726,13 +860,19 @@ cmd_install() {
         target_version="$2"
         shift 2
         ;;
+      --runtime)
+        target_runtime="$2"
+        shift 2
+        ;;
       *)
         echo "Không hiểu tham số: $1"
-        echo "Dùng: ba-kit install [--version v1.2.0]"
+        echo "Dùng: ba-kit install [--version v1.2.0] [--runtime claude,codex,agy]"
         exit 1
         ;;
     esac
   done
+
+  parse_runtime_flag "$target_runtime"  # sets SELECTED_RUNTIME_KEYS, validates
 
   echo ""
   echo "=============================================="
@@ -743,20 +883,50 @@ cmd_install() {
   check_prereqs                         # B1
   select_product                        # B2: probe repos + select
   select_version "$target_version"      # B3
-  check_cross_product                   # B4: prevent install over different product
+
+  # B4: prevent install over different product, per selected runtime.
+  # Skip runtimes already at the target version (silently if 2+ selected).
+  local -a RUNTIMES_TO_PROCESS=()
+  for key in "${SELECTED_RUNTIME_KEYS[@]}"; do
+    if check_cross_product_for_runtime "$key"; then
+      RUNTIMES_TO_PROCESS+=("$key")
+    fi
+  done
+  if [ ${#RUNTIMES_TO_PROCESS[@]} -eq 0 ]; then
+    echo "Không có runtime nào cần cài/cập nhật."
+    exit 0
+  fi
+
   download_release                      # B5
-  do_backup                             # B6
   extract_release                       # B7
 
   echo "Đang cài đặt files..."
 
-  merge_files "$EXTRACT_DIR/.claude" "$INSTALL_DIR"       # B8a
-  merge_files "$EXTRACT_DIR/ba-kit" "$INSTALL_DIR/ba-kit" true  # B8b: system files force
+  for key in "${RUNTIMES_TO_PROCESS[@]}"; do
+    local root scope label
+    root=$(runtime_root_for_key "$key")
+    scope=$(runtime_scope_for_key "$key")
+    label=$(runtime_label_for_key "$key")
 
-  post_install                          # B9
-  save_state                            # B10: save VERSION + PRODUCT + manifest
+    echo ""
+    echo "-- ${label} (${root}) --"
+
+    if [ "$scope" = "full" ]; then
+      do_backup "$root" "$(runtime_backup_dir "$key")"                          # B6
+      merge_files "$EXTRACT_DIR/.claude" "$root" "$(runtime_manifest_file "$key")"           # B8a
+      merge_files "$EXTRACT_DIR/ba-kit" "$root/ba-kit" "$(runtime_manifest_file "$key")" true # B8b
+      post_install "$root"             # B9
+    else
+      do_backup "$root/skills" "$(runtime_backup_dir "$key")"                   # B6
+      merge_files "$EXTRACT_DIR/.claude/skills" "$root/skills" "$(runtime_manifest_file "$key")" # B8
+    fi
+
+    save_state "$(runtime_version_file "$key")" "$(runtime_product_file "$key")" \
+               "$(runtime_manifest_file "$key")" "$EXTRACT_DIR"                 # B10
+  done
+
   cleanup                               # B11
-  show_result                           # B12
+  show_result "${RUNTIMES_TO_PROCESS[@]}"  # B12
 }
 
 # ============================================================
@@ -771,98 +941,172 @@ cmd_update() {
 
   check_prereqs
 
-  if [ ! -f "$VERSION_FILE" ]; then
+  # Auto-detect every runtime with existing state — no --runtime flag.
+  local -a DETECTED_KEYS=()
+  for key in "${RUNTIME_KEYS[@]}"; do
+    [ -f "$(runtime_version_file "$key")" ] && DETECTED_KEYS+=("$key")
+  done
+
+  if [ ${#DETECTED_KEYS[@]} -eq 0 ]; then
     echo "BA-kit chưa được cài đặt."
     echo "Chạy: ba-kit install"
     exit 1
   fi
 
-  if [ ! -f "$PRODUCT_FILE" ]; then
-    echo "Không tìm thấy thông tin sản phẩm. Vui lòng cài lại: ba-kit install"
-    exit 1
-  fi
-
-  SELECTED_PRODUCT=$(cat "$PRODUCT_FILE")
-  local current
-  current=$(cat "$VERSION_FILE")
-  echo "Sản phẩm:     ${SELECTED_PRODUCT}"
-  echo "Phiên bản hiện tại: ${current}"
-
-  # Find the repo for this product
-  local found=false
-  for i in "${!PRODUCT_NAMES[@]}"; do
-    if [ "${PRODUCT_NAMES[$i]}" = "$SELECTED_PRODUCT" ]; then
-      SELECTED_REPO="${PRODUCT_REPOS[$i]}"
-      found=true
-      break
+  # Group detected runtimes by their recorded product (bash 3.2: parallel
+  # arrays, not associative — small N so a linear scan is fine).
+  local -a GROUP_LABELS=() GROUP_MEMBERS=()
+  for key in "${DETECTED_KEYS[@]}"; do
+    local product
+    product=$(cat "$(runtime_product_file "$key")" 2>/dev/null)
+    [ -z "$product" ] && continue
+    local idx=-1
+    for i in "${!GROUP_LABELS[@]}"; do
+      if [ "${GROUP_LABELS[$i]}" = "$product" ]; then
+        idx=$i
+        break
+      fi
+    done
+    if [ "$idx" -eq -1 ]; then
+      GROUP_LABELS+=("$product")
+      GROUP_MEMBERS+=("$key")
+    else
+      GROUP_MEMBERS[$idx]="${GROUP_MEMBERS[$idx]},${key}"
     fi
   done
 
-  if ! $found; then
-    echo "Lỗi: Sản phẩm '${SELECTED_PRODUCT}' không được hỗ trợ."
-    echo "Vui lòng cài lại: ba-kit install"
-    exit 1
+  if [ ${#GROUP_LABELS[@]} -gt 1 ]; then
+    echo "Đang cập nhật ${#GROUP_LABELS[@]} nhóm sản phẩm riêng biệt..."
+    echo ""
   fi
 
-  # Verify still have access
-  if ! gh api "repos/${SELECTED_REPO}" --jq '.private' &>/dev/null 2>&1; then
-    echo ""
-    echo "=============================================="
-    echo "  KHÔNG CÓ QUYỀN TRUY CẬP"
-    echo "=============================================="
-    echo ""
-    echo "Quyền truy cập ${SELECTED_PRODUCT} đã bị thu hồi."
-    echo "File đã cài vẫn dùng được nhưng không thể cập nhật."
-    echo "Mua lại: ${PRODUCT_URLS[$i]:-https://polar.sh/bakit-org/products}"
-    echo "=============================================="
-    exit 1
-  fi
+  local -a ALL_PROCESSED=()
 
-  local latest
-  latest=$(gh api "repos/${SELECTED_REPO}/releases/latest" --jq '.tag_name' 2>/dev/null) || {
-    echo "Lỗi: Không thể kiểm tra phiên bản mới."
-    exit 1
-  }
-  echo "Phiên bản mới nhất: ${latest}"
+  for gi in "${!GROUP_LABELS[@]}"; do
+    local group_product="${GROUP_LABELS[$gi]}"
+    local -a group_keys
+    IFS=',' read -r -a group_keys <<< "${GROUP_MEMBERS[$gi]}"
 
-  if [ "$current" = "$latest" ]; then
+    echo "Sản phẩm: ${group_product}"
+    for key in "${group_keys[@]}"; do
+      local cur label
+      cur=$(cat "$(runtime_version_file "$key")")
+      label=$(runtime_label_for_key "$key")
+      echo "  ${label}: ${cur}"
+    done
+
+    local found=false repo="" purl=""
+    for i in "${!PRODUCT_NAMES[@]}"; do
+      if [ "${PRODUCT_NAMES[$i]}" = "$group_product" ]; then
+        repo="${PRODUCT_REPOS[$i]}"
+        purl="${PRODUCT_URLS[$i]}"
+        found=true
+        break
+      fi
+    done
+
+    if ! $found; then
+      echo "Lỗi: Sản phẩm '${group_product}' không được hỗ trợ."
+      echo "Vui lòng cài lại: ba-kit install --runtime ${group_keys[*]}"
+      exit 1
+    fi
+
+    # Verify still have access
+    if ! gh api "repos/${repo}" --jq '.private' &>/dev/null 2>&1; then
+      echo ""
+      echo "=============================================="
+      echo "  KHÔNG CÓ QUYỀN TRUY CẬP"
+      echo "=============================================="
+      echo ""
+      echo "Quyền truy cập ${group_product} đã bị thu hồi."
+      echo "File đã cài vẫn dùng được nhưng không thể cập nhật."
+      echo "Mua lại: ${purl:-https://polar.sh/bakit-org/products}"
+      echo "=============================================="
+      exit 1
+    fi
+
+    local latest
+    latest=$(gh api "repos/${repo}/releases/latest" --jq '.tag_name' 2>/dev/null) || {
+      echo "Lỗi: Không thể kiểm tra phiên bản mới."
+      exit 1
+    }
+    echo "Phiên bản mới nhất: ${latest}"
+
+    # Skip the whole group only if every member is already at latest
+    local all_latest=true
+    for key in "${group_keys[@]}"; do
+      local cur
+      cur=$(cat "$(runtime_version_file "$key")")
+      if [ "$cur" != "$latest" ]; then
+        all_latest=false
+        break
+      fi
+    done
+    if $all_latest; then
+      echo "Đang dùng phiên bản mới nhất cho nhóm này."
+      echo ""
+      continue
+    fi
+
+    local changelog
+    changelog=$(gh api "repos/${repo}/releases/latest" --jq '.body // ""' 2>/dev/null)
     echo ""
-    echo "Bạn đang dùng phiên bản mới nhất."
+    echo "Thay đổi trong ${latest}:"
+    echo "----------------------------------------"
+    echo "${changelog:-}" | head -30
+    echo "----------------------------------------"
+    echo ""
+
+    read -r -p "Cập nhật lên ${latest}? (Y/n): " confirm
+    if [ "$(lowercase "$confirm")" = "n" ]; then
+      echo "Đã hủy nhóm ${group_product}."
+      echo ""
+      continue
+    fi
+
+    echo ""
+    echo "Đang cập nhật..."
+    SELECTED_PRODUCT="$group_product"
+    SELECTED_VERSION="$latest"
+    RELEASE_NOTES="$changelog"
+    download_release
+    extract_release
+
+    echo "Đang cập nhật files..."
+
+    for key in "${group_keys[@]}"; do
+      local root scope label
+      root=$(runtime_root_for_key "$key")
+      scope=$(runtime_scope_for_key "$key")
+      label=$(runtime_label_for_key "$key")
+
+      echo ""
+      echo "-- ${label} (${root}) --"
+
+      if [ "$scope" = "full" ]; then
+        do_backup "$root" "$(runtime_backup_dir "$key")"
+        merge_files "$EXTRACT_DIR/.claude" "$root" "$(runtime_manifest_file "$key")"
+        merge_files "$EXTRACT_DIR/ba-kit" "$root/ba-kit" "$(runtime_manifest_file "$key")" true
+        post_install "$root"
+      else
+        do_backup "$root/skills" "$(runtime_backup_dir "$key")"
+        merge_files "$EXTRACT_DIR/.claude/skills" "$root/skills" "$(runtime_manifest_file "$key")"
+      fi
+
+      save_state "$(runtime_version_file "$key")" "$(runtime_product_file "$key")" \
+                 "$(runtime_manifest_file "$key")" "$EXTRACT_DIR"
+      ALL_PROCESSED+=("$key")
+    done
+
+    cleanup
+    echo ""
+  done
+
+  if [ ${#ALL_PROCESSED[@]} -eq 0 ]; then
     exit 0
   fi
 
-  local changelog
-  changelog=$(gh api "repos/${SELECTED_REPO}/releases/latest" --jq '.body // ""' 2>/dev/null)
-  echo ""
-  echo "Thay đổi trong ${latest}:"
-  echo "----------------------------------------"
-  echo "${changelog:-}" | head -30
-  echo "----------------------------------------"
-  echo ""
-
-  read -r -p "Cập nhật lên ${latest}? (Y/n): " confirm
-  if [ "$(lowercase "$confirm")" = "n" ]; then
-    echo "Đã hủy."
-    exit 0
-  fi
-
-  echo ""
-  echo "Đang cập nhật..."
-  SELECTED_VERSION="$latest"
-  RELEASE_NOTES="$changelog"
-  download_release
-  do_backup
-  extract_release
-
-  echo "Đang cập nhật files..."
-
-  merge_files "$EXTRACT_DIR/.claude" "$INSTALL_DIR"
-  merge_files "$EXTRACT_DIR/ba-kit" "$INSTALL_DIR/ba-kit" true
-
-  post_install
-  save_state
-  cleanup
-  show_result
+  show_result "${ALL_PROCESSED[@]}"
 }
 
 # ============================================================
@@ -875,13 +1119,24 @@ cmd_doctor() {
   echo "=============================================="
   echo ""
 
-  # Product + Version
-  if [ -f "$PRODUCT_FILE" ] && [ -f "$VERSION_FILE" ]; then
-    echo "[OK]   Sản phẩm: $(cat "$PRODUCT_FILE") $(cat "$VERSION_FILE")"
-  elif [ -f "$VERSION_FILE" ]; then
-    echo "[OK]   BA-kit version: $(cat "$VERSION_FILE") (chưa có PRODUCT file — cài lại để cập nhật)"
-  else
-    echo "[CHƯA] BA-kit chưa được cài đặt"
+  # Product + Version — per runtime
+  local any_installed=false
+  for key in "${RUNTIME_KEYS[@]}"; do
+    local label pfile vfile
+    label=$(runtime_label_for_key "$key")
+    pfile=$(runtime_product_file "$key")
+    vfile=$(runtime_version_file "$key")
+    if [ -f "$pfile" ] && [ -f "$vfile" ]; then
+      echo "[OK]   ${label}: $(cat "$pfile") $(cat "$vfile")"
+      any_installed=true
+    elif [ -f "$vfile" ]; then
+      echo "[OK]   ${label}: $(cat "$vfile") (chưa có PRODUCT file — cài lại để cập nhật)"
+      any_installed=true
+    else
+      echo "[CHƯA] ${label}: chưa được cài đặt"
+    fi
+  done
+  if ! $any_installed; then
     echo "       Chạy: ba-kit install"
   fi
 
@@ -931,14 +1186,27 @@ cmd_doctor() {
     echo "[CẢNH BÁO] Python3 chưa cài (cần cho guardrail scripts)"
   fi
 
-  # Components
+  # Components — per runtime, scoped to what that runtime actually gets
   echo ""
   echo "Components đã cài:"
-  [ -d "$INSTALL_DIR/skills" ]    && echo "  Skills:    $(ls -1 "$INSTALL_DIR/skills/" 2>/dev/null | wc -l | tr -d ' ') thư mục"
-  [ -d "$INSTALL_DIR/agents" ]    && echo "  Agents:    $(ls -1 "$INSTALL_DIR/agents/" 2>/dev/null | wc -l | tr -d ' ') file"
-  [ -d "$INSTALL_DIR/templates" ] && echo "  Templates: $(ls -1 "$INSTALL_DIR/templates/" 2>/dev/null | wc -l | tr -d ' ') file"
-  [ -d "$INSTALL_DIR/hooks" ]     && echo "  Hooks:     $(ls -1 "$INSTALL_DIR/hooks/" 2>/dev/null | wc -l | tr -d ' ') file"
-  [ -d "$INSTALL_DIR/ba-kit" ]    && echo "  Core:      ~/.claude/ba-kit/"
+  for key in "${RUNTIME_KEYS[@]}"; do
+    local root scope label
+    root=$(runtime_root_for_key "$key")
+    scope=$(runtime_scope_for_key "$key")
+    label=$(runtime_label_for_key "$key")
+    [ ! -f "$(runtime_version_file "$key")" ] && continue
+
+    echo "  ${label}:"
+    if [ "$scope" = "full" ]; then
+      [ -d "$root/skills" ]    && echo "    Skills:    $(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ') thư mục"
+      [ -d "$root/agents" ]    && echo "    Agents:    $(ls -1 "$root/agents/" 2>/dev/null | wc -l | tr -d ' ') file"
+      [ -d "$root/templates" ] && echo "    Templates: $(ls -1 "$root/templates/" 2>/dev/null | wc -l | tr -d ' ') file"
+      [ -d "$root/hooks" ]     && echo "    Hooks:     $(ls -1 "$root/hooks/" 2>/dev/null | wc -l | tr -d ' ') file"
+      [ -d "$root/ba-kit" ]    && echo "    Core:      ${root}/ba-kit/"
+    else
+      [ -d "$root/skills" ] && echo "    Skills: $(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ') thư mục"
+    fi
+  done
 
   echo ""
 }
@@ -947,32 +1215,77 @@ cmd_doctor() {
 # COMMAND: ba-kit version
 # ============================================================
 cmd_version() {
-  if [ -f "$PRODUCT_FILE" ] && [ -f "$VERSION_FILE" ]; then
-    echo "$(cat "$PRODUCT_FILE") $(cat "$VERSION_FILE")"
-  elif [ -f "$VERSION_FILE" ]; then
-    echo "BA-kit $(cat "$VERSION_FILE")"
-  else
-    echo "BA-kit CLI (chưa cài content)"
-    echo "Chạy: ba-kit install"
-  fi
+  echo "BA-kit CLI: v${CLI_VERSION}"
+  for key in "${RUNTIME_KEYS[@]}"; do
+    local label pfile vfile
+    label=$(runtime_label_for_key "$key")
+    pfile=$(runtime_product_file "$key")
+    vfile=$(runtime_version_file "$key")
+    if [ -f "$pfile" ] && [ -f "$vfile" ]; then
+      echo "  ${label}: $(cat "$pfile") $(cat "$vfile")"
+    elif [ -f "$vfile" ]; then
+      echo "  ${label}: $(cat "$vfile")"
+    else
+      echo "  ${label}: (chưa cài)"
+    fi
+  done
 }
 
 # ============================================================
 # COMMAND: ba-kit uninstall
 # ============================================================
 cmd_uninstall() {
-  local product_name="BA-kit"
-  if [ -f "$PRODUCT_FILE" ]; then
-    product_name=$(cat "$PRODUCT_FILE")
+  local target_runtime=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --runtime)
+        target_runtime="$2"
+        shift 2
+        ;;
+      *)
+        echo "Không hiểu tham số: $1"
+        echo "Dùng: ba-kit uninstall [--runtime claude,codex,agy]"
+        exit 1
+        ;;
+    esac
+  done
+
+  # No flag = auto-detect every runtime with existing state (backward
+  # compatible: existing users only ever have claude state, so this finds
+  # exactly claude, same as today).
+  local -a TARGET_RUNTIME_KEYS=()
+  if [ -n "$target_runtime" ]; then
+    parse_runtime_flag "$target_runtime"
+    TARGET_RUNTIME_KEYS=("${SELECTED_RUNTIME_KEYS[@]}")
+  else
+    for key in "${RUNTIME_KEYS[@]}"; do
+      [ -f "$(runtime_version_file "$key")" ] && TARGET_RUNTIME_KEYS+=("$key")
+    done
+  fi
+
+  if [ ${#TARGET_RUNTIME_KEYS[@]} -eq 0 ]; then
+    echo "Không có runtime nào đã cài."
+    exit 0
   fi
 
   echo ""
   echo "=============================================="
-  echo "  GỠ CÀI ĐẶT ${product_name}"
+  echo "  GỠ CÀI ĐẶT"
   echo "=============================================="
   echo ""
-  echo "Thao tác này sẽ xóa ${product_name} khỏi ~/.claude/."
-  echo "Một bản backup sẽ được tạo trước khi xóa."
+  echo "Sẽ gỡ các runtime sau (có backup trước khi xóa):"
+  for key in "${TARGET_RUNTIME_KEYS[@]}"; do
+    local label root pfile vfile product version
+    label=$(runtime_label_for_key "$key")
+    root=$(runtime_root_for_key "$key")
+    pfile=$(runtime_product_file "$key")
+    vfile=$(runtime_version_file "$key")
+    product="(không rõ)"; version="(không rõ)"
+    [ -f "$pfile" ] && product=$(cat "$pfile")
+    [ -f "$vfile" ] && version=$(cat "$vfile")
+    echo "  - ${label} (${root}): ${product} ${version}"
+  done
   echo ""
 
   read -r -p "Bạn có chắc muốn tiếp tục? (y/N): " confirm
@@ -983,35 +1296,62 @@ cmd_uninstall() {
 
   echo ""
 
-  local backup_path="${BACKUP_DIR}/pre-uninstall-$(date +%Y-%m-%d-%H%M%S)"
-  mkdir -p "$backup_path"
-  if [ -d "$INSTALL_DIR" ]; then
-    _copy_safe "$INSTALL_DIR" "$backup_path"
-    echo "Đã backup vào: ${backup_path}"
-  fi
-
-  echo "Đang xóa ${product_name} files..."
-
-  for skill in ba-collab ba-content-audit ba-do ba-figma-sync ba-impact \
-              ba-kit-update ba-next ba-notion ba-qc-export ba-start \
-              ba-stitch-sync brainstorm qc-uc-review reverse-web; do
-    rm -rf "$INSTALL_DIR/skills/$skill" 2>/dev/null || true
+  local has_claude=false
+  for key in "${TARGET_RUNTIME_KEYS[@]}"; do
+    [ "$key" = "claude" ] && has_claude=true
   done
 
-  rm -rf "$INSTALL_DIR/agents" 2>/dev/null || true
-  rm -rf "$INSTALL_DIR/rules/ba-kit" 2>/dev/null || true
-  rm -rf "$INSTALL_DIR/templates" 2>/dev/null || true
-  rm -rf "$INSTALL_DIR/ba-kit" 2>/dev/null || true
-  rm -f "$INSTALL_DIR/core" 2>/dev/null || true
-  rm -f "$INSTALL_DIR/hooks"/guardrail-*.sh 2>/dev/null || true
-  rm -f "$INSTALL_DIR/hooks"/postwrite-guardrail.sh 2>/dev/null || true
-  rm -f "$BIN_DIR/ba-kit" 2>/dev/null || true
+  for key in "${TARGET_RUNTIME_KEYS[@]}"; do
+    local root scope label backup_dir backup_path
+    root=$(runtime_root_for_key "$key")
+    scope=$(runtime_scope_for_key "$key")
+    label=$(runtime_label_for_key "$key")
+    backup_dir=$(runtime_backup_dir "$key")
+    backup_path="${backup_dir}/pre-uninstall-$(date +%Y-%m-%d-%H%M%S)"
 
-  clean_hooks_json
+    echo "-- ${label} (${root}) --"
 
-  echo "Đã gỡ cài đặt ${product_name}."
-  echo "Backup tại: ${backup_path}"
-  echo ""
+    if [ "$scope" = "full" ]; then
+      mkdir -p "$backup_path"
+      if [ -d "$root" ]; then
+        _copy_safe "$root" "$backup_path"
+        echo "Đã backup vào: ${backup_path}"
+      fi
+
+      for skill in "${BA_KIT_SKILL_NAMES[@]}"; do
+        rm -rf "$root/skills/$skill" 2>/dev/null || true
+      done
+      rm -rf "$root/agents" 2>/dev/null || true
+      rm -rf "$root/rules/ba-kit" 2>/dev/null || true
+      rm -rf "$root/templates" 2>/dev/null || true
+      rm -rf "$root/ba-kit" 2>/dev/null || true
+      rm -f "$root/core" 2>/dev/null || true
+      rm -f "$root/hooks"/guardrail-*.sh 2>/dev/null || true
+      rm -f "$root/hooks"/postwrite-guardrail.sh 2>/dev/null || true
+      rm -f "$BIN_DIR/ba-kit" 2>/dev/null || true
+    else
+      # Skills-only runtime — never touch anything under $root besides
+      # skills/<name> and ba-kit/ (the rest is the user's own tool config).
+      if [ -d "$root/skills" ]; then
+        mkdir -p "$backup_path"
+        _copy_safe "$root/skills" "$backup_path"
+        echo "Đã backup vào: ${backup_path}"
+      fi
+
+      for skill in "${BA_KIT_SKILL_NAMES[@]}"; do
+        rm -rf "$root/skills/$skill" 2>/dev/null || true
+      done
+      rm -rf "$root/ba-kit" 2>/dev/null || true
+    fi
+
+    echo "Đã gỡ ${label}."
+    echo ""
+  done
+
+  if $has_claude; then
+    clean_hooks_json
+  fi
+
   echo "Để cài lại: npm install -g @bakit-org/cli && ba-kit install"
 }
 

@@ -17,12 +17,26 @@ npx @bakit-org/cli doctor
 ## Usage
 
 ```bash
-ba-kit install    # First install
-ba-kit update     # Update to latest
-ba-kit doctor     # Health check
-ba-kit version    # Show version
-ba-kit uninstall  # Uninstall (with backup)
+ba-kit install                     # First install (default: claude runtime)
+ba-kit install --runtime <list>    # Install for specific runtime(s), e.g. claude,codex,agy
+ba-kit update                      # Update to latest (all installed runtimes)
+ba-kit doctor                      # Health check
+ba-kit version                     # Show CLI version + per-runtime installed version
+ba-kit uninstall                   # Uninstall (with backup, auto-detects installed runtimes)
+ba-kit uninstall --runtime <list>  # Uninstall specific runtime(s) only
 ```
+
+## Runtimes
+
+| Key | Runtime | Scope |
+|-----|---------|-------|
+| `claude` (default) | Claude Code | Full — skills, agents, hooks, templates |
+| `codex` | Codex CLI | Skills only |
+| `agy` | Antigravity IDE | Skills only |
+
+Omit `--runtime` to install for Claude Code only (unchanged, backward-compatible
+default). Pass a comma-separated list to install for multiple runtimes in one
+command, e.g. `ba-kit install --runtime claude,codex,agy`.
 
 ## Purchase
 
