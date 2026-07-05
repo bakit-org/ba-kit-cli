@@ -47,6 +47,7 @@ https://polar.sh/checkout/polar_c_Bd8xfL8VTBQtYpol2MdbS2M5acEFMsjKmDFec0bYVGF
 - [GitHub CLI](https://cli.github.com) (`gh`) — `brew install gh`
 - `gh auth login` — authenticate with GitHub
 - Node.js 18+ (for `npm install -g`)
+- Windows only: [Git for Windows](https://git-scm.com/download/win) (provides `bash.exe`, required by the CLI)
 
 ## Quick Start
 
