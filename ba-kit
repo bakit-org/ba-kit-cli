@@ -30,7 +30,7 @@ PRODUCT_URLS=(
 # bash script has no reliable path-independent way to read package.json at
 # runtime (npm global installs, npx, and symlinked ~/.local/bin/ba-kit all
 # resolve differently), so this is a deliberate duplicated constant.
-CLI_VERSION="1.2.3"
+CLI_VERSION="1.2.4"
 
 RUNTIME_KEYS=("claude" "codex" "agy")
 RUNTIME_LABELS=("Claude Code" "Codex CLI" "Antigravity IDE")
@@ -1180,6 +1180,7 @@ cmd_update() {
     echo ""
     echo "Đang cập nhật..."
     SELECTED_PRODUCT="$group_product"
+    SELECTED_REPO="$repo"
     SELECTED_VERSION="$latest"
     RELEASE_NOTES="$changelog"
     download_release
