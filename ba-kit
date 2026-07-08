@@ -30,7 +30,7 @@ PRODUCT_URLS=(
 # bash script has no reliable path-independent way to read package.json at
 # runtime (npm global installs, npx, and symlinked ~/.local/bin/ba-kit all
 # resolve differently), so this is a deliberate duplicated constant.
-CLI_VERSION="1.2.5"
+CLI_VERSION="1.2.6"
 
 RUNTIME_KEYS=("claude" "codex" "agy")
 RUNTIME_LABELS=("Claude Code" "Codex CLI" "Antigravity IDE")
@@ -204,6 +204,25 @@ usage() {
 # missing CLI deps instead of just printing instructions and exiting.
 # Always confirms before running anything (no silent sudo/system changes).
 # ============================================================
+
+# winget-installed portable packages (jq, etc.) get a shim in
+# %LOCALAPPDATA%\Microsoft\WinGet\Links, added to the User PATH via a
+# registry broadcast — but that broadcast never reaches an
+# already-running bash session. Without this, a tool winget installed in
+# an earlier session reads as "missing" here, triggering a pointless
+# reinstall attempt that winget correctly refuses ("already installed,
+# no upgrade found"), which then read as a hard failure.
+refresh_windows_path() {
+  [ -z "${LOCALAPPDATA:-}" ] && return
+  local links_dir="${LOCALAPPDATA}/Microsoft/WinGet/Links"
+  [ ! -d "$links_dir" ] && return
+  case ":$PATH:" in
+    *":$links_dir:"*) ;;
+    *) PATH="$PATH:$links_dir" ;;
+  esac
+  hash -r 2>/dev/null || true
+}
+
 detect_os() {
   case "$(uname -s)" in
     Darwin) echo "macos" ;;
@@ -280,7 +299,15 @@ auto_install_dep() {
   esac
 
   echo "Đang cài ${dep_name}..."
-  if eval "$install_cmd"; then
+  local install_ok=0
+  eval "$install_cmd" || install_ok=1
+
+  # Re-scan even on a reported failure: winget exits nonzero for "already
+  # installed, no upgrade found" although the binary is genuinely present —
+  # the shim just isn't on this session's PATH yet (see refresh_windows_path).
+  [ "$os" = "windows" ] && refresh_windows_path
+
+  if [ "$install_ok" -eq 0 ]; then
     echo "  Cài ${dep_name} thành công."
     return 0
   fi
@@ -292,6 +319,8 @@ auto_install_dep() {
 # B1: KIỂM TRA PREREQUISITES
 # ============================================================
 check_prereqs() {
+  refresh_windows_path
+
   if ! command -v gh &>/dev/null; then
     auto_install_dep "GitHub CLI (gh)" "gh" "gh" "gh" "github-cli" "gh" "GitHub.cli" "gh" "gh" || true
   fi
@@ -818,6 +847,7 @@ register_hooks() {
 
   [ ! -d "$hooks_dir" ] && return
 
+  refresh_windows_path
   if ! command -v python3 &>/dev/null; then
     auto_install_dep "Python 3" "python3" "python3" "python3" "python" "python3" "Python.Python.3" "python3" "python" || true
   fi
@@ -943,6 +973,7 @@ clean_hooks_json() {
   local settings="$HOME/.claude/settings.json"
   [ ! -f "$settings" ] && return
 
+  refresh_windows_path
   if ! command -v python3 &>/dev/null; then
     auto_install_dep "Python 3" "python3" "python3" "python3" "python" "python3" "Python.Python.3" "python3" "python" || true
   fi
