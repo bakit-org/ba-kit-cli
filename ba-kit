@@ -30,7 +30,7 @@ PRODUCT_URLS=(
 # bash script has no reliable path-independent way to read package.json at
 # runtime (npm global installs, npx, and symlinked ~/.local/bin/ba-kit all
 # resolve differently), so this is a deliberate duplicated constant.
-CLI_VERSION="1.2.4"
+CLI_VERSION="1.2.5"
 
 RUNTIME_KEYS=("claude" "codex" "agy")
 RUNTIME_LABELS=("Claude Code" "Codex CLI" "Antigravity IDE")
