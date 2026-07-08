@@ -200,9 +200,101 @@ usage() {
 }
 
 # ============================================================
+# Auto-install helpers — detect OS/package manager, offer to install
+# missing CLI deps instead of just printing instructions and exiting.
+# Always confirms before running anything (no silent sudo/system changes).
+# ============================================================
+detect_os() {
+  case "$(uname -s)" in
+    Darwin) echo "macos" ;;
+    Linux) echo "linux" ;;
+    MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
+    *) echo "unknown" ;;
+  esac
+}
+
+detect_linux_pkg_manager() {
+  if command -v apt-get &>/dev/null; then echo "apt"
+  elif command -v dnf &>/dev/null; then echo "dnf"
+  elif command -v pacman &>/dev/null; then echo "pacman"
+  elif command -v zypper &>/dev/null; then echo "zypper"
+  else echo "unknown"
+  fi
+}
+
+detect_windows_pkg_manager() {
+  if command -v winget &>/dev/null; then echo "winget"
+  elif command -v choco &>/dev/null; then echo "choco"
+  elif command -v scoop &>/dev/null; then echo "scoop"
+  else echo "unknown"
+  fi
+}
+
+# Args: dep_name brew_pkg apt_pkg dnf_pkg pacman_pkg zypper_pkg winget_id choco_pkg scoop_pkg
+# Returns 0 if installed successfully, 1 if unavailable/declined/failed
+# (caller should fall back to manual instructions on non-zero).
+auto_install_dep() {
+  local dep_name="$1" brew_pkg="$2" apt_pkg="$3" dnf_pkg="$4" pacman_pkg="$5" zypper_pkg="$6" winget_id="$7" choco_pkg="$8" scoop_pkg="$9"
+
+  # No real terminal to prompt on (CI, piped install) — skip, let caller show manual steps.
+  if [ ! -t 0 ] && [ ! -r /dev/tty ]; then
+    return 1
+  fi
+
+  local os install_cmd=""
+  os=$(detect_os)
+
+  case "$os" in
+    macos)
+      command -v brew &>/dev/null && install_cmd="brew install ${brew_pkg}"
+      ;;
+    linux)
+      local sudo_prefix=""
+      [ "$(id -u)" -ne 0 ] && command -v sudo &>/dev/null && sudo_prefix="sudo "
+      case "$(detect_linux_pkg_manager)" in
+        apt)    install_cmd="${sudo_prefix}apt-get install -y ${apt_pkg}" ;;
+        dnf)    install_cmd="${sudo_prefix}dnf install -y ${dnf_pkg}" ;;
+        pacman) install_cmd="${sudo_prefix}pacman -S --noconfirm ${pacman_pkg}" ;;
+        zypper) install_cmd="${sudo_prefix}zypper install -y ${zypper_pkg}" ;;
+      esac
+      ;;
+    windows)
+      case "$(detect_windows_pkg_manager)" in
+        winget) install_cmd="winget install -e --id ${winget_id}" ;;
+        choco)  install_cmd="choco install -y ${choco_pkg}" ;;
+        scoop)  install_cmd="scoop install ${scoop_pkg}" ;;
+      esac
+      ;;
+  esac
+
+  [ -z "$install_cmd" ] && return 1
+
+  echo ""
+  echo "Phát hiện có thể tự động cài ${dep_name} bằng lệnh:"
+  echo "  ${install_cmd}"
+  local reply=""
+  read -r -p "Cài ngay? (y/N): " reply < /dev/tty || return 1
+  case "$reply" in
+    y|Y|yes|Yes) ;;
+    *) return 1 ;;
+  esac
+
+  echo "Đang cài ${dep_name}..."
+  if eval "$install_cmd"; then
+    echo "  Cài ${dep_name} thành công."
+    return 0
+  fi
+  echo "  Cài ${dep_name} thất bại."
+  return 1
+}
+
+# ============================================================
 # B1: KIỂM TRA PREREQUISITES
 # ============================================================
 check_prereqs() {
+  if ! command -v gh &>/dev/null; then
+    auto_install_dep "GitHub CLI (gh)" "gh" "gh" "gh" "github-cli" "gh" "GitHub.cli" "gh" "gh" || true
+  fi
   if ! command -v gh &>/dev/null; then
     echo "=============================================="
     echo "  CHƯA CÀI GITHUB CLI (gh)"
@@ -222,6 +314,27 @@ check_prereqs() {
     echo "  → Chọn: GitHub.com"
     echo "  → Chọn: HTTPS"
     echo "  → Chọn: Login with a web browser"
+    echo "=============================================="
+    exit 1
+  fi
+
+  if ! command -v jq &>/dev/null; then
+    auto_install_dep "jq" "jq" "jq" "jq" "jq" "jq" "jqlang.jq" "jq" "jq" || true
+  fi
+  if ! command -v jq &>/dev/null; then
+    echo "=============================================="
+    echo "  CHƯA CÀI jq"
+    echo "=============================================="
+    echo ""
+    echo "jq là công cụ xử lý JSON. BA-kit cần jq để đọc dữ liệu từ GitHub API."
+    echo ""
+    echo "Cách cài:"
+    echo "  macOS:            brew install jq"
+    echo "  Windows:          winget install jqlang.jq"
+    echo "                     Hoặc: choco install jq"
+    echo "                     Hoặc tải từ: https://jqlang.org/download"
+    echo "  Linux (Ubuntu):   sudo apt install jq"
+    echo "  Linux (Fedora):   sudo dnf install jq"
     echo "=============================================="
     exit 1
   fi
@@ -705,6 +818,14 @@ register_hooks() {
 
   [ ! -d "$hooks_dir" ] && return
 
+  if ! command -v python3 &>/dev/null; then
+    auto_install_dep "Python 3" "python3" "python3" "python3" "python" "python3" "Python.Python.3" "python3" "python" || true
+  fi
+  if ! command -v python3 &>/dev/null; then
+    echo "  [CẢNH BÁO] Python3 chưa cài — bỏ qua đăng ký hooks (macOS: brew install python3)."
+    return
+  fi
+
   echo "  Dang dang ky hooks..."
 
   if [ ! -f "$settings" ]; then
@@ -821,6 +942,14 @@ PYEOF
 clean_hooks_json() {
   local settings="$HOME/.claude/settings.json"
   [ ! -f "$settings" ] && return
+
+  if ! command -v python3 &>/dev/null; then
+    auto_install_dep "Python 3" "python3" "python3" "python3" "python" "python3" "Python.Python.3" "python3" "python" || true
+  fi
+  if ! command -v python3 &>/dev/null; then
+    echo "  [CẢNH BÁO] Python3 chưa cài — bỏ qua dọn hooks cũ."
+    return
+  fi
 
   PYTHONIOENCODING=utf-8 python3 << PYEOF
 import json, os, re
@@ -1263,6 +1392,14 @@ cmd_doctor() {
     echo "[THIẾU] GitHub CLI chưa cài"
     echo "        macOS: brew install gh"
     echo "        Khác: https://cli.github.com"
+  fi
+
+  # jq
+  if command -v jq &>/dev/null; then
+    echo "[OK]   jq: $(jq --version 2>/dev/null || echo "unknown")"
+  else
+    echo "[THIẾU] jq chưa cài"
+    echo "        macOS: brew install jq | Windows: winget install jqlang.jq"
   fi
 
   # gh auth
