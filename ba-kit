@@ -106,7 +106,7 @@ parse_runtime_flag() {
 # the whole ~/.claude tree. Keeping one shared list avoids the rules/ba-kit
 # path-mismatch bug (fixed in 1.1.13) from recurring in a second call site.
 BA_KIT_SKILLS=(
-  ba-collab ba-content-audit ba-do ba-figma-sync ba-impact
+  ba-content-audit ba-do ba-figma-sync ba-impact
   ba-next ba-notion ba-start
   ba-stitch-sync brainstorm qc-uc-review reverse-web
 )
