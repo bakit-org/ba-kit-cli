@@ -26,11 +26,12 @@ PRODUCT_URLS=(
   "https://polar.sh/bakit-org/products/ba-kit-solo-pro"
 )
 
-# Bumped by hand alongside package.json's "version" on every release — the
-# bash script has no reliable path-independent way to read package.json at
-# runtime (npm global installs, npx, and symlinked ~/.local/bin/ba-kit all
-# resolve differently), so this is a deliberate duplicated constant.
-CLI_VERSION="1.2.6"
+# Synced from package.json by `npm version` (see scripts/sync-cli-version.js)
+# — do not hand-edit. Duplicated rather than read at runtime because this
+# script also ships standalone via GitHub release tarball with no adjacent
+# package.json (npm global installs, npx, and symlinked ~/.local/bin/ba-kit
+# all resolve differently too).
+CLI_VERSION="1.2.9"
 
 RUNTIME_KEYS=("claude" "codex" "agy")
 RUNTIME_LABELS=("Claude Code" "Codex CLI" "Antigravity IDE")
@@ -739,6 +740,7 @@ merge_files() {
   local dest="$2"
   local manifest_file="$3"
   local force="${4:-false}"
+  local reconciled_file="${5:-}"
 
   [ ! -d "$src" ] && return
 
@@ -747,16 +749,19 @@ merge_files() {
   local old_manifest="{}"
   [ -f "$manifest_file" ] && old_manifest=$(cat "$manifest_file")
 
-  local new_manifest="{}"
-  local parent_manifest
-  parent_manifest=$(dirname "$src")/release-manifest.json
-  [ -f "$parent_manifest" ] && new_manifest=$(cat "$parent_manifest")
+  # release-manifest.json keys are relative to the release build root, e.g.
+  # "./.claude/skills/foo/SKILL.md" or "./ba-kit/core/behavior/x.md" — not
+  # the bare rel_path this loop computes. Reconstruct the same prefix so
+  # old_hash lookups actually hit instead of silently missing every time.
+  local key_prefix
+  key_prefix="./$(basename "$src")"
 
   local created=0 updated=0 preserved=0
 
   while IFS= read -r -d '' src_file; do
     local rel_path="${src_file#$src/}"
     local dest_file="$dest/$rel_path"
+    local manifest_key="${key_prefix}/${rel_path}"
 
     if [ -d "$src_file" ]; then
       continue
@@ -766,12 +771,14 @@ merge_files() {
       mkdir -p "$(dirname "$dest_file")"
       cp "$src_file" "$dest_file"
       created=$((created + 1))
+      [ -n "$reconciled_file" ] && record_reconciled_hash "$reconciled_file" "$manifest_key" "$(sha256 "$src_file")"
       continue
     fi
 
     if $force; then
       cp "$src_file" "$dest_file"
       updated=$((updated + 1))
+      [ -n "$reconciled_file" ] && record_reconciled_hash "$reconciled_file" "$manifest_key" "$(sha256 "$src_file")"
       continue
     fi
 
@@ -781,19 +788,32 @@ merge_files() {
     fi
 
     local old_hash new_hash current_hash
-    old_hash=$(echo "$old_manifest" | jq -r ".\"$rel_path\" // empty" 2>/dev/null)
+    old_hash=$(echo "$old_manifest" | jq -r ".\"$manifest_key\" // empty" 2>/dev/null)
     new_hash=$(sha256 "$src_file")
     current_hash=$(sha256 "$dest_file")
 
     if [ "$old_hash" = "$current_hash" ] || [ "$new_hash" = "$current_hash" ]; then
       cp "$src_file" "$dest_file"
       updated=$((updated + 1))
+      [ -n "$reconciled_file" ] && record_reconciled_hash "$reconciled_file" "$manifest_key" "$new_hash"
     else
+      # Preserved: don't let the manifest lie about it. Record the hash
+      # actually on disk so a future release can still adopt this file the
+      # moment it stops differing, instead of being stuck "preserved"
+      # forever against a baseline it was never compared against correctly.
       preserved=$((preserved + 1))
+      [ -n "$reconciled_file" ] && record_reconciled_hash "$reconciled_file" "$manifest_key" "$current_hash"
     fi
   done < <(find "$src" -print0)
 
   echo "  ${created} file mới | ${updated} file cập nhật | ${preserved} file giữ nguyên (đã tùy chỉnh)"
+}
+
+record_reconciled_hash() {
+  local file="$1" key="$2" hash="$3"
+  local tmp
+  tmp=$(mktemp)
+  jq --arg k "$key" --arg h "$hash" '. + {($k): $h}' "$file" > "$tmp" && mv "$tmp" "$file"
 }
 
 is_protected() {
@@ -1040,15 +1060,21 @@ PYEOF
 # B10: LƯU VERSION + PRODUCT + MANIFEST
 # ============================================================
 save_state() {
-  local version_file="$1" product_file="$2" manifest_file="$3" extract_dir="$4"
+  local version_file="$1" product_file="$2" manifest_file="$3" manifest_source="$4"
   echo "Đang lưu thông tin..."
 
   mkdir -p "$(dirname "$version_file")"
   echo "$SELECTED_VERSION" > "$version_file"
   echo "$SELECTED_PRODUCT" > "$product_file"
 
-  if [ -f "$extract_dir/release-manifest.json" ]; then
-    cp "$extract_dir/release-manifest.json" "$manifest_file"
+  # manifest_source is the reconciled manifest built during merge_files
+  # (actual on-disk hash per file, not the raw release manifest) — see
+  # record_reconciled_hash(). Falls back to the raw release manifest if a
+  # caller still passes an extract dir, so older call sites don't break.
+  if [ -f "$manifest_source" ]; then
+    cp "$manifest_source" "$manifest_file"
+  elif [ -f "$manifest_source/release-manifest.json" ]; then
+    cp "$manifest_source/release-manifest.json" "$manifest_file"
   fi
 }
 
@@ -1184,18 +1210,21 @@ cmd_install() {
     echo ""
     echo "-- ${label} (${root}) --"
 
+    local reconciled_manifest="${TMP_DIR}/reconciled-${key}.json"
+    echo '{}' > "$reconciled_manifest"
+
     if [ "$scope" = "full" ]; then
       do_backup "$root" "$(runtime_backup_dir "$key")"                          # B6
-      merge_files "$EXTRACT_DIR/.claude" "$root" "$(runtime_manifest_file "$key")"           # B8a
-      merge_files "$EXTRACT_DIR/ba-kit" "$root/ba-kit" "$(runtime_manifest_file "$key")" true # B8b
+      merge_files "$EXTRACT_DIR/.claude" "$root" "$(runtime_manifest_file "$key")" false "$reconciled_manifest"           # B8a
+      merge_files "$EXTRACT_DIR/ba-kit" "$root/ba-kit" "$(runtime_manifest_file "$key")" true "$reconciled_manifest" # B8b
       post_install "$root"             # B9
     else
       do_backup "$root/skills" "$(runtime_backup_dir "$key")"                   # B6
-      merge_files "$EXTRACT_DIR/.claude/skills" "$root/skills" "$(runtime_manifest_file "$key")" # B8
+      merge_files "$EXTRACT_DIR/.claude/skills" "$root/skills" "$(runtime_manifest_file "$key")" false "$reconciled_manifest" # B8
     fi
 
     save_state "$(runtime_version_file "$key")" "$(runtime_product_file "$key")" \
-               "$(runtime_manifest_file "$key")" "$EXTRACT_DIR"                 # B10
+               "$(runtime_manifest_file "$key")" "$reconciled_manifest"         # B10
   done
 
   cleanup                               # B11
@@ -1357,18 +1386,21 @@ cmd_update() {
       echo ""
       echo "-- ${label} (${root}) --"
 
+      local reconciled_manifest="${TMP_DIR}/reconciled-${key}.json"
+      echo '{}' > "$reconciled_manifest"
+
       if [ "$scope" = "full" ]; then
         do_backup "$root" "$(runtime_backup_dir "$key")"
-        merge_files "$EXTRACT_DIR/.claude" "$root" "$(runtime_manifest_file "$key")"
-        merge_files "$EXTRACT_DIR/ba-kit" "$root/ba-kit" "$(runtime_manifest_file "$key")" true
+        merge_files "$EXTRACT_DIR/.claude" "$root" "$(runtime_manifest_file "$key")" false "$reconciled_manifest"
+        merge_files "$EXTRACT_DIR/ba-kit" "$root/ba-kit" "$(runtime_manifest_file "$key")" true "$reconciled_manifest"
         post_install "$root"
       else
         do_backup "$root/skills" "$(runtime_backup_dir "$key")"
-        merge_files "$EXTRACT_DIR/.claude/skills" "$root/skills" "$(runtime_manifest_file "$key")"
+        merge_files "$EXTRACT_DIR/.claude/skills" "$root/skills" "$(runtime_manifest_file "$key")" false "$reconciled_manifest"
       fi
 
       save_state "$(runtime_version_file "$key")" "$(runtime_product_file "$key")" \
-                 "$(runtime_manifest_file "$key")" "$EXTRACT_DIR"
+                 "$(runtime_manifest_file "$key")" "$reconciled_manifest"
       ALL_PROCESSED+=("$key")
     done
 
