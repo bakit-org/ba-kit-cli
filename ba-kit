@@ -833,8 +833,8 @@ post_install() {
     fi
   fi
 
-  if [ -d "$root/ba-kit" ]; then
-    ln -sfn "$root/ba-kit" "$root/core" 2>/dev/null || true
+  if [ -d "$root/ba-kit/core" ]; then
+    ln -sfn "$root/ba-kit/core" "$root/core" 2>/dev/null || true
   fi
 
   echo "  Hoàn tất."
