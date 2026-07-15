@@ -1,0 +1,103 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  pull_request:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+
+jobs:
+  syntax-bash:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash -n ba-kit
+
+  syntax-js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node -c bin/ba-kit.js
+      - run: node -c lib/archive-helper.js
+      - run: node -c tests/check-version-contract.js
+
+  node-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: bakit-org/ba-kit-solo
+          path: ba-kit-solo
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: node --test tests/archive-helper.test.js
+      - run: node tests/check-version-contract.js
+        env:
+          BA_KIT_SOLO_DIR: ${{ github.workspace }}/ba-kit-solo
+
+  smoke-ubuntu:
+    runs-on: ubuntu-latest
+    needs: [syntax-bash, syntax-js, node-tests]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: bash tests/cli-smoke/run-all.sh
+      - run: bash tests/cli-smoke/cases/packaged-cli-smoke.sh
+
+  smoke-macos:
+    runs-on: macos-latest
+    needs: [syntax-bash, syntax-js]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: bash tests/cli-smoke/run-all.sh
+      - run: bash tests/cli-smoke/cases/packaged-cli-smoke.sh
+
+  smoke-windows:
+    runs-on: windows-latest
+    needs: [syntax-bash, syntax-js]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Git for Windows bash is available on windows-latest runner
+      - run: |
+          npm ci
+          bash tests/cli-smoke/run-all.sh
+          bash tests/cli-smoke/cases/packaged-cli-smoke.sh
+        env:
+          BA_KIT_WINDOWS: '1'
+
+  version-contract:
+    runs-on: ubuntu-latest
+    needs: [syntax-bash, syntax-js, node-tests]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: bakit-org/ba-kit-solo
+          path: ba-kit-solo
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node tests/check-version-contract.js
+        env:
+          BA_KIT_SOLO_DIR: ${{ github.workspace }}/ba-kit-solo

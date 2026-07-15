@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# ============================================================
+# BA-kit CLI smoke test — curl stub
+# ============================================================
+# Records calls, returns canned responses based on CURL_MODE.
+
+CURL_CALL_LOG="${CURL_CALL_LOG:-/tmp/curl-call-log.txt}"
+: > "$CURL_CALL_LOG"
+
+case "${CURL_MODE:-ok}" in
+  ok)
+    url="$*"
+    # Solo public latest release
+    if echo "$url" | grep -q "releases/latest"; then
+      echo '{"tag_name":"v0.0.0","name":"v0.0.0","body":"test","assets":[{"name":"ba-kit-v0.0.0.tar.gz","browser_download_url":"https://github.com/bakit-org/ba-kit-solo/releases/download/v0.0.0/ba-kit-v0.0.0.tar.gz"},{"name":"ba-kit-v0.0.0.tar.gz.sha256","browser_download_url":"https://github.com/bakit-org/ba-kit-solo/releases/download/v0.0.0/ba-kit-v0.0.0.tar.gz.sha256"}]}'
+    else
+      echo "STUB: ok"
+    fi
+    ;;
+  api-fail)
+    echo "$*" >> "$CURL_CALL_LOG"
+    exit 22
+    ;;
+  asset-fail)
+    if echo "$*" | grep -q "download"; then
+      exit 22
+    fi
+    echo '{"tag_name":"v0.0.0","name":"v0.0.0","assets":[]}'
+    ;;
+  *)
+    echo "Unknown CURL_MODE: $CURL_MODE" >&2
+    exit 1
+    ;;
+esac
+
+echo "$*" >> "$CURL_CALL_LOG"

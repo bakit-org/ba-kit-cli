@@ -19,11 +19,15 @@ BIN_DIR="$HOME/.local/bin"
 VERSION_FILE="$INSTALL_DIR/ba-kit/VERSION"
 MANIFEST_FILE="$INSTALL_DIR/ba-kit/release-manifest.json"
 PRODUCT_FILE="$INSTALL_DIR/ba-kit/PRODUCT"
-PRODUCT_NAMES=("BA-kit" "BA-kit Solo Pro")
-PRODUCT_REPOS=("bakit-org/bakit" "bakit-org/ba-kit-solo-pro")
+PRODUCT_IDS=("ba-kit" "ba-kit-solo-pro" "ba-kit-solo-basic")
+PRODUCT_NAMES=("BA-kit" "BA-kit Solo Pro" "BA-kit Solo Basic")
+PRODUCT_REPOS=("bakit-org/bakit" "bakit-org/ba-kit-solo-pro" "bakit-org/ba-kit-solo")
+PRODUCT_VISIBILITIES=("private" "private" "public")
+PRODUCT_PROFILES=("standard" "standard" "solo-basic")
 PRODUCT_URLS=(
   "https://polar.sh/checkout/polar_c_Bd8xfL8VTBQtYpol2MdbS2M5acEFMsjKmDFec0bYVGF"
   "https://polar.sh/bakit-org/products/ba-kit-solo-pro"
+  "https://github.com/bakit-org/ba-kit-solo"
 )
 
 # Synced from package.json by `npm version` (see scripts/sync-cli-version.js)
@@ -31,7 +35,7 @@ PRODUCT_URLS=(
 # script also ships standalone via GitHub release tarball with no adjacent
 # package.json (npm global installs, npx, and symlinked ~/.local/bin/ba-kit
 # all resolve differently too).
-CLI_VERSION="1.2.9"
+CLI_VERSION="1.3.0"
 
 RUNTIME_KEYS=("claude" "codex" "agy")
 RUNTIME_LABELS=("Claude Code" "Codex CLI" "Antigravity IDE")
@@ -63,6 +67,74 @@ runtime_backup_dir() {
   else
     echo "$(runtime_root_for_key "$key")/ba-kit/backups"
   fi
+}
+
+# ============================================================
+# PRODUCT REGISTRY HELPERS
+# ============================================================
+validate_product_registry() {
+  local n=${#PRODUCT_IDS[@]}
+  test "$n" -eq "${#PRODUCT_IDS[@]}" || { echo "Lỗi: PRODUCT_IDS array has wrong length"; exit 1; }
+  test "$n" -eq "${#PRODUCT_NAMES[@]}" || { echo "Lỗi: PRODUCT_NAMES length mismatch"; exit 1; }
+  test "$n" -eq "${#PRODUCT_REPOS[@]}" || { echo "Lỗi: PRODUCT_REPOS length mismatch"; exit 1; }
+  test "$n" -eq "${#PRODUCT_VISIBILITIES[@]}" || { echo "Lỗi: PRODUCT_VISIBILITIES length mismatch"; exit 1; }
+  test "$n" -eq "${#PRODUCT_PROFILES[@]}" || { echo "Lỗi: PRODUCT_PROFILES length mismatch"; exit 1; }
+  test "$n" -eq "${#PRODUCT_URLS[@]}" || { echo "Lỗi: PRODUCT_URLS length mismatch"; exit 1; }
+
+  local i=0
+  while [ "$i" -lt "$n" ]; do
+    local id="${PRODUCT_IDS[$i]}"
+    local vis="${PRODUCT_VISIBILITIES[$i]}"
+    local prof="${PRODUCT_PROFILES[$i]}"
+    local repo="${PRODUCT_REPOS[$i]}"
+    [ -n "$id" ] || { echo "Lỗi: empty product id at index $i"; exit 1; }
+    [ "$vis" = "public" ] || [ "$vis" = "private" ] || { echo "Lỗi: invalid visibility '$vis' at index $i"; exit 1; }
+    [ -n "$prof" ] || { echo "Lỗi: empty profile at index $i"; exit 1; }
+    [ -n "$repo" ] || { echo "Lỗi: empty repo at index $i"; exit 1; }
+    # Check ID uniqueness
+    local j=0
+    while [ "$j" -lt "$i" ]; do
+      test "${PRODUCT_IDS[$j]}" != "$id" || { echo "Lỗi: duplicate product ID '$id' at indices $j and $i"; exit 1; }
+      j=$((j + 1))
+    done
+    i=$((i + 1))
+  done
+}
+
+product_index_for_id() {
+  local id="$1"
+  local i=0
+  while [ "$i" -lt "${#PRODUCT_IDS[@]}" ]; do
+    if [ "${PRODUCT_IDS[$i]}" = "$id" ]; then
+      echo "$i"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
+product_index_for_name() {
+  local name="$1"
+  local i=0
+  while [ "$i" -lt "${#PRODUCT_NAMES[@]}" ]; do
+    if [ "${PRODUCT_NAMES[$i]}" = "$name" ]; then
+      echo "$i"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
+select_product_index() {
+  local idx="$1"
+  PRODUCT_INDEX="$idx"
+  SELECTED_PRODUCT_ID="${PRODUCT_IDS[$idx]}"
+  SELECTED_PRODUCT="${PRODUCT_NAMES[$idx]}"
+  SELECTED_REPO="${PRODUCT_REPOS[$idx]}"
+  SELECTED_VISIBILITY="${PRODUCT_VISIBILITIES[$idx]}"
+  SELECTED_PROFILE="${PRODUCT_PROFILES[$idx]}"
 }
 
 # Parses "$1" (comma-list or empty) into global SELECTED_RUNTIME_KEYS array.
@@ -130,6 +202,7 @@ sha256() {
   fi
 }
 main() {
+  validate_product_registry
   case "${1:-}" in
     install)   shift; cmd_install "$@" ;;
     update)    cmd_update ;;
@@ -168,9 +241,13 @@ main() {
       echo "  codex   Codex CLI — chỉ skills"
       echo "  agy     Antigravity IDE — chỉ skills"
       echo ""
-      echo "Các sản phẩm:"
-      for i in "${!PRODUCT_NAMES[@]}"; do
-        echo "  ${PRODUCT_NAMES[$i]} — ${PRODUCT_URLS[$i]}"
+      echo "Sản phẩm:"
+      for i in "${!PRODUCT_IDS[@]}"; do
+        if [ "${PRODUCT_VISIBILITIES[$i]}" = "public" ]; then
+          echo "  ${PRODUCT_NAMES[$i]} — Miễn phí (không cần đăng nhập)"
+        else
+          echo "  ${PRODUCT_NAMES[$i]} — Cần mua + gh auth login: ${PRODUCT_URLS[$i]}"
+        fi
       done
       ;;
   esac
@@ -194,9 +271,13 @@ usage() {
   echo "  codex   Codex CLI — chỉ skills"
   echo "  agy     Antigravity IDE — chỉ skills"
   echo ""
-  echo "Các sản phẩm:"
-  for i in "${!PRODUCT_NAMES[@]}"; do
-    echo "  ${PRODUCT_NAMES[$i]} — ${PRODUCT_URLS[$i]}"
+  echo "Sản phẩm:"
+  for i in "${!PRODUCT_IDS[@]}"; do
+    if [ "${PRODUCT_VISIBILITIES[$i]}" = "public" ]; then
+      echo "  ${PRODUCT_NAMES[$i]} — Miễn phí (không cần đăng nhập)"
+    else
+      echo "  ${PRODUCT_NAMES[$i]} — Cần mua + gh auth login: ${PRODUCT_URLS[$i]}"
+    fi
   done
 }
 
@@ -317,36 +398,10 @@ auto_install_dep() {
 }
 
 # ============================================================
-# B1: KIỂM TRA PREREQUISITES
+# B1: KIỂM TRA COMMON PREREQUISITES (no gh/auth required)
 # ============================================================
-check_prereqs() {
+check_common_prereqs() {
   refresh_windows_path
-
-  if ! command -v gh &>/dev/null; then
-    auto_install_dep "GitHub CLI (gh)" "gh" "gh" "gh" "github-cli" "gh" "GitHub.cli" "gh" "gh" || true
-  fi
-  if ! command -v gh &>/dev/null; then
-    echo "=============================================="
-    echo "  CHƯA CÀI GITHUB CLI (gh)"
-    echo "=============================================="
-    echo ""
-    echo "GitHub CLI là công cụ để máy tính xác thực với GitHub."
-    echo "BA-kit cần gh CLI để tải content từ private repo."
-    echo ""
-    echo "Cách cài:"
-    echo "  macOS:            brew install gh"
-    echo "  Windows:          winget install GitHub.CLI"
-    echo "                     Hoặc tải từ: https://cli.github.com"
-    echo "  Linux (Ubuntu):   sudo apt install gh"
-    echo "  Linux (Fedora):   sudo dnf install gh"
-    echo ""
-    echo "Sau khi cài, chạy: gh auth login"
-    echo "  → Chọn: GitHub.com"
-    echo "  → Chọn: HTTPS"
-    echo "  → Chọn: Login with a web browser"
-    echo "=============================================="
-    exit 1
-  fi
 
   if ! command -v jq &>/dev/null; then
     auto_install_dep "jq" "jq" "jq" "jq" "jq" "jq" "jqlang.jq" "jq" "jq" || true
@@ -369,51 +424,147 @@ check_prereqs() {
     exit 1
   fi
 
+  if ! command -v curl &>/dev/null; then
+    echo "=============================================="
+    echo "  CHƯA CÀI curl"
+    echo "=============================================="
+    echo ""
+    echo "curl là công cụ tải file từ internet. BA-kit cần curl để tải release công khai."
+    echo ""
+    echo "Cách cài:"
+    echo "  macOS:            brew install curl"
+    echo "  Windows:          winget install cURL.cURL"
+    echo "  Linux (Ubuntu):   sudo apt install curl"
+    echo "=============================================="
+    exit 1
+  fi
+
+  if ! command -v tar &>/dev/null; then
+    echo "=============================================="
+    echo "  CHƯA CÀI tar"
+    echo "=============================================="
+    echo ""
+    echo "tar là công cụ giải nén. Hầu hết hệ điều hành đã có sẵn."
+    echo "  macOS: đã có sẵn"
+    echo "  Linux: đã có sẵn"
+    echo "  Windows: cài Git for Windows (đã có tar)"
+    echo "=============================================="
+    exit 1
+  fi
+
+  if ! command -v sha256sum &>/dev/null && ! command -v shasum &>/dev/null; then
+    echo "=============================================="
+    echo "  CHƯA CÀI sha256sum hoặc shasum"
+    echo "=============================================="
+    echo "Cần công cụ kiểm tra checksum."
+    echo "  macOS: đã có shasum"
+    echo "  Linux: đã có sha256sum"
+    echo "=============================================="
+    exit 1
+  fi
+}
+
+# Check if gh is installed and authenticated — silent, side-effect free
+github_auth_available() {
+  command -v gh &>/dev/null && gh auth status -h github.com &>/dev/null 2>&1
+}
+
+require_private_github_access() {
+  local product="$1"
+  if ! command -v gh &>/dev/null; then
+    auto_install_dep "GitHub CLI (gh)" "gh" "gh" "gh" "github-cli" "gh" "GitHub.cli" "gh" "gh" || true
+  fi
+  if ! command -v gh &>/dev/null; then
+    echo "=============================================="
+    echo "  CHƯA CÀI GITHUB CLI (gh)"
+    echo "=============================================="
+    echo ""
+    echo "$product là sản phẩm riêng tư, cần GitHub CLI để xác thực."
+    echo ""
+    echo "Cách cài:"
+    echo "  macOS:            brew install gh"
+    echo "  Windows:          winget install GitHub.CLI"
+    echo "                     Hoặc tải từ: https://cli.github.com"
+    echo "  Linux (Ubuntu):   sudo apt install gh"
+    echo "  Linux (Fedora):   sudo dnf install gh"
+    echo ""
+    echo "Sau khi cài, chạy: gh auth login"
+    echo "  → Chọn: GitHub.com → HTTPS → Login with a web browser"
+    echo "=============================================="
+    exit 1
+  fi
+
   if ! gh auth status -h github.com &>/dev/null 2>&1; then
     echo "=============================================="
     echo "  CHƯA ĐĂNG NHẬP GITHUB"
     echo "=============================================="
     echo ""
-    echo "Bạn cần đăng nhập GitHub CLI để truy cập repo BA-kit."
+    echo "$product là sản phẩm riêng tư, cần đăng nhập GitHub."
     echo ""
     echo "Chạy lệnh sau và làm theo hướng dẫn:"
-    echo ""
     echo "  gh auth login"
-    echo ""
-    echo "Khi được hỏi, chọn:"
-    echo "  1. What account do you want to log into?"
-    echo "     → GitHub.com"
-    echo "  2. What is your preferred protocol for Git operations?"
-    echo "     → HTTPS"
-    echo "  3. How would you like to authenticate GitHub CLI?"
-    echo "     → Login with a web browser"
-    echo "  4. Trình duyệt sẽ mở ra → copy mã code từ Terminal paste vào"
     echo "=============================================="
     exit 1
   fi
 }
 
 # ============================================================
-# B2: CHỌN SẢN PHẨM (probe repos, auto-select or prompt)
+# B1-OLD: KIỂM TRA PREREQUISITES (deprecated — kept for compat)
 # ============================================================
+check_prereqs() {
+  check_common_prereqs
+  if ! github_auth_available; then
+    echo "=============================================="
+    echo "  CHƯA CÀI GITHUB CLI (gh)"
+    echo "=============================================="
+    echo ""
+    echo "GitHub CLI là công cụ để máy tính xác thực với GitHub."
+    echo "BA-kit cần gh CLI để tải content từ private repo."
+    echo ""
+    echo "Cách cài:"
+    echo "  macOS:            brew install gh"
+    echo "  Windows:          winget install GitHub.CLI"
+    echo "                     Hoặc tải từ: https://cli.github.com"
+    echo "  Linux (Ubuntu):   sudo apt install gh"
+    echo "  Linux (Fedora):   sudo dnf install gh"
+    echo ""
+    echo "Sau khi cài, chạy: gh auth login"
+    echo "  → Chọn: GitHub.com"
+    echo "  → Chọn: HTTPS"
+    echo "  → Chọn: Login with a web browser"
+    echo "=============================================="
+    exit 1
+  fi
+}
+
+# ============================================================
+# B2: CHỌN SẢN PHẨM
+# ============================================================
+# Public products always included. Private products probed only with gh auth.
 select_product() {
-  echo "Đang kiểm tra quyền truy cập..."
+  local can_private=false
+  github_auth_available && can_private=true
 
-  local accessible=()
-  local accessible_names=()
-  local accessible_repos=()
+  local accessible_ids=() accessible_names=() accessible_repos=() accessible_indices=()
 
-  for i in "${!PRODUCT_NAMES[@]}"; do
-    local name="${PRODUCT_NAMES[$i]}"
+  local i=0
+  while [ "$i" -lt "${#PRODUCT_IDS[@]}" ]; do
+    local vis="${PRODUCT_VISIBILITIES[$i]}"
     local repo="${PRODUCT_REPOS[$i]}"
-    if gh api "repos/${repo}" --jq '.private' &>/dev/null 2>&1; then
-      accessible+=("$i")
-      accessible_names+=("$name")
-      accessible_repos+=("$repo")
+
+    if [ "$vis" = "public" ]; then
+      accessible_indices+=("$i")
+      accessible_names+=("${PRODUCT_NAMES[$i]}")
+    elif $can_private; then
+      if gh api "repos/${repo}" --jq '.private' &>/dev/null 2>&1; then
+        accessible_indices+=("$i")
+        accessible_names+=("${PRODUCT_NAMES[$i]}")
+      fi
     fi
+    i=$((i + 1))
   done
 
-  if [ ${#accessible[@]} -eq 0 ]; then
+  if [ ${#accessible_indices[@]} -eq 0 ]; then
     echo ""
     echo "=============================================="
     echo "  CHƯA CÓ QUYỀN TRUY CẬP"
@@ -421,46 +572,80 @@ select_product() {
     echo ""
     echo "Bạn chưa có quyền truy cập bất kỳ sản phẩm BA-kit nào."
     echo ""
-    echo "Cách khắc phục:"
-    echo "  - Chưa mua: mua tại một trong các link sau:"
-    for i in "${!PRODUCT_NAMES[@]}"; do
-      echo "    ${PRODUCT_NAMES[$i]}: ${PRODUCT_URLS[$i]}"
+    echo "BA-kit Solo Basic là sản phẩm miễn phí — vui lòng báo lỗi này."
+    echo ""
+    echo "Các sản phẩm trả phí:"
+    for j in "${!PRODUCT_NAMES[@]}"; do
+      echo "    ${PRODUCT_NAMES[$j]}: ${PRODUCT_URLS[$j]}"
     done
-    echo "  - Đã mua: kiểm tra email (cả spam) tìm GitHub invite"
-    echo "            Click \"Accept invitation\" trong email"
-    echo "  - Sau khi accept: chạy 'gh auth login' để đăng nhập lại"
     echo "=============================================="
     exit 1
   fi
 
-  if [ ${#accessible[@]} -eq 1 ]; then
-    PRODUCT_INDEX="${accessible[0]}"
-    SELECTED_REPO="${accessible_repos[0]}"
-    SELECTED_PRODUCT="${accessible_names[0]}"
+  if [ ${#accessible_indices[@]} -eq 1 ]; then
+    select_product_index "${accessible_indices[0]}"
     echo "  Phát hiện: ${SELECTED_PRODUCT}"
+    if ! $can_private && [ "$SELECTED_VISIBILITY" = "public" ]; then
+      echo "  (sản phẩm riêng tư cần 'gh auth login' để hiển thị)"
+    fi
     return 0
   fi
 
-  # Multiple repos accessible — prompt user
+  # Multiple candidates — numbered prompt
   echo ""
   echo "Bạn có quyền truy cập nhiều sản phẩm BA-kit:"
   echo ""
-  for j in "${!accessible[@]}"; do
+  local j=0
+  while [ "$j" -lt "${#accessible_indices[@]}" ]; do
     echo "  [$((j+1))] ${accessible_names[$j]}"
+    j=$((j + 1))
   done
   echo ""
-  read -r -p "Chọn sản phẩm muốn cài (1-${#accessible[@]}): " choice
+  read -r -p "Chọn sản phẩm muốn cài (1-${#accessible_indices[@]}): " choice
 
-  if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#accessible[@]} ]; then
+  if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#accessible_indices[@]} ]; then
     echo "Lựa chọn không hợp lệ."
     exit 1
   fi
 
-  local idx=$((choice - 1))
-  PRODUCT_INDEX="${accessible[$idx]}"
-  SELECTED_REPO="${accessible_repos[$idx]}"
-  SELECTED_PRODUCT="${accessible_names[$idx]}"
+  local pick=$((choice - 1))
+  select_product_index "${accessible_indices[$pick]}"
   echo "  Đã chọn: ${SELECTED_PRODUCT}"
+}
+
+# ============================================================
+# B3: RELEASE CLIENT (public/private)
+# ============================================================
+get_release_json() {
+  local target="${1:-latest}"
+  local endpoint
+
+  if [ "$target" = "latest" ]; then
+    endpoint="repos/${SELECTED_REPO}/releases/latest"
+  else
+    # Encode tag for URL
+    local encoded_tag
+    encoded_tag=$(echo "$target" | sed 's/ /%20/g')
+    endpoint="repos/${SELECTED_REPO}/releases/tags/${encoded_tag}"
+  fi
+
+  if [ "$SELECTED_VISIBILITY" = "public" ]; then
+    local json
+    json=$(curl -fsSL -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/${endpoint}" 2>/dev/null) || {
+      echo "Lỗi: Không thể lấy release công khai của ${SELECTED_PRODUCT}. Kiểm tra mạng và thử lại."
+      exit 1
+    }
+    echo "$json"
+  else
+    require_private_github_access "$SELECTED_PRODUCT"
+    local json
+    json=$(gh api "${endpoint}" 2>/dev/null) || {
+      echo "Lỗi: Không thể lấy release của ${SELECTED_PRODUCT}."
+      exit 1
+    }
+    echo "$json"
+  fi
 }
 
 # ============================================================
@@ -471,26 +656,12 @@ select_version() {
 
   if [ "$target" = "latest" ]; then
     echo "Đang tìm phiên bản mới nhất..."
-
-    local release_json
-    if ! release_json=$(gh api "repos/${SELECTED_REPO}/releases/latest" 2>/dev/null); then
-      echo "Lỗi: Không thể lấy thông tin phiên bản từ GitHub."
-      echo "Vui lòng kiểm tra kết nối mạng và thử lại."
-      exit 1
-    fi
-
-    SELECTED_VERSION=$(echo "$release_json" | jq -r '.tag_name')
-    RELEASE_NOTES=$(echo "$release_json" | jq -r '.body // ""')
-  else
-    local release_json
-    if ! release_json=$(gh api "repos/${SELECTED_REPO}/releases/tags/${target}" 2>/dev/null); then
-      echo "Lỗi: Phiên bản '${target}' không tồn tại."
-      echo "Dùng 'ba-kit install' (không --version) để cài bản mới nhất."
-      exit 1
-    fi
-    SELECTED_VERSION="$target"
-    RELEASE_NOTES=$(echo "$release_json" | jq -r '.body // ""')
   fi
+
+  local release_json
+  release_json=$(get_release_json "$target") || exit 1
+  SELECTED_VERSION=$(echo "$release_json" | jq -r '.tag_name')
+  RELEASE_NOTES=$(echo "$release_json" | jq -r '.body // ""')
 
   echo "  Phiên bản: ${SELECTED_VERSION}"
   if [ -n "${RELEASE_NOTES:-}" ] && [ "${RELEASE_NOTES:-}" != "null" ]; then
@@ -572,44 +743,90 @@ check_cross_product_for_runtime() {
 # ============================================================
 download_release() {
   echo "Đang tải ${SELECTED_PRODUCT} ${SELECTED_VERSION}..."
-  echo "  (Dung lượng khoảng 2-5 MB, tùy tốc độ mạng có thể mất vài giây)"
 
   TMP_DIR=$(mktemp -d)
-  ARCHIVE_FILE="${TMP_DIR}/ba-kit-${SELECTED_VERSION}.tar.gz"
+  local archive_name="ba-kit-${SELECTED_VERSION}.tar.gz"
+  ARCHIVE_FILE="${TMP_DIR}/${archive_name}"
+  local checksum_name="${archive_name}.sha256"
 
-  if ! gh release download "$SELECTED_VERSION" \
-      -R "$SELECTED_REPO" \
-      -p "ba-kit-${SELECTED_VERSION}.tar.gz" \
-      -O "$ARCHIVE_FILE" \
-      --clobber 2>/dev/null; then
-    echo "Lỗi: Không thể tải ${SELECTED_PRODUCT} ${SELECTED_VERSION}."
-    echo "Vui lòng kiểm tra kết nối mạng và thử lại."
-    rm -rf "$TMP_DIR"
-    exit 1
-  fi
+  if [ "$SELECTED_VISIBILITY" = "public" ]; then
+    # Resolve asset URL from already-fetched release JSON
+    local release_json
+    release_json=$(get_release_json "$SELECTED_VERSION")
+    local archive_url
+    archive_url=$(echo "$release_json" | jq -r --arg name "$archive_name" '
+      .assets[] | select(.name == $name) | .browser_download_url')
+    if [ -z "$archive_url" ] || [ "$archive_url" = "null" ]; then
+      echo "Lỗi: Không tìm thấy asset ${archive_name} trong release ${SELECTED_VERSION}."
+      rm -rf "$TMP_DIR"
+      exit 1
+    fi
 
-  echo "  Đã tải xong. Đang kiểm tra checksum..."
+    local checksum_url
+    checksum_url=$(echo "$release_json" | jq -r --arg name "$checksum_name" '
+      .assets[] | select(.name == $name) | .browser_download_url')
+    if [ -z "$checksum_url" ] || [ "$checksum_url" = "null" ]; then
+      echo "Lỗi: Release ${SELECTED_VERSION} thiếu checksum bắt buộc; chưa cài file nào."
+      rm -rf "$TMP_DIR"
+      exit 1
+    fi
 
-  local checksum_file="${TMP_DIR}/checksum.sha256"
-  if gh release download "$SELECTED_VERSION" \
-      -R "$SELECTED_REPO" \
-      -p "ba-kit-${SELECTED_VERSION}.tar.gz.sha256" \
-      -O "$checksum_file" \
-      --clobber 2>/dev/null; then
+    curl -fL --retry 2 --retry-delay 1 -o "$ARCHIVE_FILE" "$archive_url" 2>/dev/null || {
+      echo "Lỗi: Không thể tải ${SELECTED_PRODUCT} ${SELECTED_VERSION}."
+      echo "Vui lòng kiểm tra kết nối mạng và thử lại."
+      rm -rf "$TMP_DIR"
+      exit 1
+    }
 
+    local checksum_file="${TMP_DIR}/checksum.sha256"
+    curl -fL -o "$checksum_file" "$checksum_url" 2>/dev/null || {
+      echo "Lỗi: Không thể tải checksum."
+      rm -rf "$TMP_DIR"
+      exit 1
+    }
+
+    echo "  Đã tải xong. Đang kiểm tra checksum..."
     local expected actual
-    expected=$(cut -d' ' -f1 "$checksum_file")
+    expected=$(awk '{print $1}' "$checksum_file")
     actual=$(sha256 "$ARCHIVE_FILE")
-
     if [ "$expected" != "$actual" ]; then
       echo "Lỗi: File tải về bị lỗi (checksum không khớp)."
-      echo "Vui lòng thử lại hoặc liên hệ hỗ trợ."
       rm -rf "$TMP_DIR"
       exit 1
     fi
     echo "  Checksum hợp lệ."
   else
-    echo "  Không tìm thấy file checksum, bỏ qua bước kiểm tra."
+    # Private: use gh release download
+    require_private_github_access "$SELECTED_PRODUCT"
+    if ! gh release download "$SELECTED_VERSION" \
+        -R "$SELECTED_REPO" \
+        -p "$archive_name" \
+        -O "$ARCHIVE_FILE" \
+        --clobber 2>/dev/null; then
+      echo "Lỗi: Không thể tải ${SELECTED_PRODUCT} ${SELECTED_VERSION}."
+      rm -rf "$TMP_DIR"
+      exit 1
+    fi
+
+    echo "  Đã tải xong. Đang kiểm tra checksum..."
+    local checksum_file="${TMP_DIR}/checksum.sha256"
+    if gh release download "$SELECTED_VERSION" \
+        -R "$SELECTED_REPO" \
+        -p "$checksum_name" \
+        -O "$checksum_file" \
+        --clobber 2>/dev/null; then
+      local expected actual
+      expected=$(awk '{print $1}' "$checksum_file")
+      actual=$(sha256 "$ARCHIVE_FILE")
+      if [ "$expected" != "$actual" ]; then
+        echo "Lỗi: File tải về bị lỗi (checksum không khớp)."
+        rm -rf "$TMP_DIR"
+        exit 1
+      fi
+      echo "  Checksum hợp lệ."
+    else
+      echo "  Không tìm thấy file checksum, bỏ qua bước kiểm tra."
+    fi
   fi
 }
 
@@ -720,16 +937,58 @@ prune_backups() {
 }
 
 # ============================================================
-# B7: GIẢI NÉN
+# B7: VALIDATE + EXTRACT (via Node archive-helper)
 # ============================================================
-extract_release() {
-  echo "Đang giải nén..."
+# Path to the packaged Node helper
+ARCHIVE_HELPER="$(dirname "$(realpath "$0" 2>/dev/null || echo "$0")")/lib/archive-helper.js"
+# npm global install typically resolves the script dir differently; fallback
+if [ ! -f "$ARCHIVE_HELPER" ]; then
+  # Try relative to the bin/ba-kit.js dispatcher
+  ARCHIVE_HELPER="$(cd "$(dirname "$0")/.." && pwd)/lib/archive-helper.js"
+fi
 
+inspect_archive() {
+  echo "Đang kiểm tra archive..."
+  local result
+  result=$(node "$ARCHIVE_HELPER" inspect \
+    --archive "$ARCHIVE_FILE" \
+    --profile "$SELECTED_PROFILE" \
+    --cli-version "$CLI_VERSION" \
+    --selected-product "$SELECTED_PRODUCT_ID" \
+    --selected-version "$SELECTED_VERSION" 2>&1) || {
+    echo "Lỗi: Archive validation failed."
+    local err
+    err=$(echo "$result" | jq -r '.error // "unknown error"' 2>/dev/null || echo "$result")
+    echo "  $err"
+    exit 1
+  }
+  local ok
+  ok=$(echo "$result" | jq -r '.ok' 2>/dev/null)
+  if [ "$ok" != "true" ]; then
+    echo "Lỗi: Archive không hợp lệ: $result"
+    exit 1
+  fi
+  echo "  Archive hợp lệ."
+}
+
+extract_archive() {
+  echo "Đang giải nén..."
   EXTRACT_DIR="${TMP_DIR}/extracted"
   mkdir -p "$EXTRACT_DIR"
-  tar -xzf "$ARCHIVE_FILE" -C "$EXTRACT_DIR"
-
+  node "$ARCHIVE_HELPER" extract \
+    --archive "$ARCHIVE_FILE" \
+    --profile "$SELECTED_PROFILE" \
+    --destination "$EXTRACT_DIR" 2>&1 || {
+    echo "Lỗi: Không thể giải nén archive."
+    exit 1
+  }
   echo "  Giải nén hoàn tất."
+}
+
+# Legacy shim
+extract_release() {
+  inspect_archive
+  extract_archive
 }
 
 # ============================================================
@@ -1091,7 +1350,6 @@ cleanup() {
 # B12: HIỂN THỊ KẾT QUẢ
 # ============================================================
 show_result() {
-  # $@ = processed runtime keys
   echo ""
   echo "=============================================="
   echo "  CÀI ĐẶT THÀNH CÔNG!"
@@ -1108,7 +1366,17 @@ show_result() {
     echo "  Sản phẩm:   ${SELECTED_PRODUCT}"
     echo "  Phiên bản:  ${SELECTED_VERSION}"
 
-    if [ "$scope" = "full" ]; then
+    if [ "$SELECTED_PROFILE" = "solo-basic" ]; then
+      local skill_count template_count
+      skill_count=$(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ')
+      template_count=$(ls -1 "$root/templates/" 2>/dev/null | wc -l | tr -d ' ')
+      echo "  Skills:     ${skill_count}/5 (ba-do, ba-impact, ba-next, ba-start, brainstorm)"
+      echo "  Templates:  ${template_count}"
+      if [ -d "$root/core" ]; then
+        echo "  Core:       ${root}/core"
+      fi
+      echo "  Không có agents, hooks, hay scripts."
+    elif [ "$scope" = "full" ]; then
       local skill_count agent_count template_count hook_count
       skill_count=$(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ')
       agent_count=$(ls -1 "$root/agents/" 2>/dev/null | wc -l | tr -d ' ')
@@ -1133,17 +1401,434 @@ show_result() {
     fi
   done
 
-  echo ""
-  echo "  Bắt đầu sử dụng:"
-  echo "    Vào Claude Code (/claude trong Terminal)"
-  echo "    Gõ /ba-start để bắt đầu dự án BA"
-  echo ""
-  echo "  Cập nhật sau này:"
-  echo "    ba-kit update"
-  echo ""
-  echo "  Kiểm tra sức khỏe:"
-  echo "    ba-kit doctor"
+  if [ "$SELECTED_PROFILE" = "solo-basic" ]; then
+    echo ""
+    echo "  Bắt đầu sử dụng:"
+    echo "    Vào Claude Code, Codex hoặc AGY"
+    echo "    Gõ /ba-start để bắt đầu dự án BA"
+    echo ""
+    echo "  Cập nhật sau này:"
+    echo "    ba-kit update"
+    echo ""
+    echo "  Kiểm tra sức khỏe:"
+    echo "    ba-kit doctor"
+  else
+    echo ""
+    echo "  Bắt đầu sử dụng:"
+    echo "    Vào Claude Code (/claude trong Terminal)"
+    echo "    Gõ /ba-start để bắt đầu dự án BA"
+    echo ""
+    echo "  Cập nhật sau này:"
+    echo "    ba-kit update"
+    echo ""
+    echo "  Kiểm tra sức khỏe:"
+    echo "    ba-kit doctor"
+  fi
   echo "=============================================="
+}
+
+# ============================================================
+# PROFILE COMPONENT MAPPING
+# ============================================================
+# Emits rows: source_relative | dest_relative | manifest_key_prefix
+profile_components() {
+  local profile="$1" runtime_key="$2"
+
+  case "${profile}:${runtime_key}" in
+    standard:claude)
+      echo ".claude|.|./.claude/"
+      echo "ba-kit|ba-kit|./ba-kit/"
+      ;;
+    standard:codex|standard:agy)
+      echo ".claude/skills|skills|./.claude/skills/"
+      ;;
+    solo-basic:*)
+      echo ".claude/skills|skills|./.claude/skills/"
+      echo ".claude/templates|templates|./.claude/templates/"
+      echo "ba-kit/core|core|./ba-kit/core/"
+      ;;
+    *)
+      echo "Unknown profile/runtime: ${profile}/${runtime_key}" >&2
+      return 1
+      ;;
+  esac
+}
+
+# Map an archive manifest key to runtime-relative destination path
+manifest_key_to_runtime_path() {
+  local profile="$1" runtime_key="$2" key="$3"
+
+  # Resolve which component owns this key
+  while IFS='|' read -r src_rel dest_rel prefix; do
+    [ -z "$prefix" ] && continue
+    # Check if key starts with prefix
+    case "$key" in
+      "${prefix}"*)
+        local rel="${key#"$prefix"}"
+        echo "${dest_rel}/${rel}"
+        return 0
+        ;;
+    esac
+  done < <(profile_components "$profile" "$runtime_key")
+
+  return 1  # key not owned by this profile/runtime
+}
+
+# Validate Solo-specific archive payload structure
+validate_solo_release_payload() {
+  local extract_dir="$1"
+
+  # Top-level roots: .claude, ba-kit, manifest.json, release-manifest.json
+  local expected_roots=".claude ba-kit manifest.json release-manifest.json"
+  local actual_roots
+  actual_roots=$(cd "$extract_dir" && ls -A | sort | paste -sd ' ' -)
+  if [ "$actual_roots" != "$expected_roots" ]; then
+    echo "Lỗi: Cấu trúc archive Solo không đúng. Mong đợi: ${expected_roots}, thực tế: ${actual_roots}"
+    exit 1
+  fi
+
+  # .claude children: skills + templates only
+  local claude_children
+  claude_children=$(cd "$extract_dir/.claude" && ls -A | sort | paste -sd ' ' - 2>/dev/null)
+  if [ "$claude_children" != "skills templates" ]; then
+    echo "Lỗi: .claude/ trong archive Solo phải chỉ có skills/ và templates/"
+    exit 1
+  fi
+
+  # ba-kit child: core only
+  local bakit_children
+  bakit_children=$(cd "$extract_dir/ba-kit" && ls -A | sort | paste -sd ' ' - 2>/dev/null)
+  if [ "$bakit_children" != "core" ]; then
+    echo "Lỗi: ba-kit/ trong archive Solo phải chỉ có core/"
+    exit 1
+  fi
+
+  # Exactly 5 skills
+  local expected_skills="ba-do ba-impact ba-next ba-start brainstorm"
+  local actual_skills
+  actual_skills=$(cd "$extract_dir/.claude/skills" && ls -d */ 2>/dev/null | sed 's|/||g' | sort | paste -sd ' ' -)
+  if [ "$actual_skills" != "$expected_skills" ]; then
+    echo "Lỗi: Skill set không đúng. Mong đợi: ${expected_skills}, thực tế: ${actual_skills}"
+    exit 1
+  fi
+}
+
+# === Schema-v2 State File Management ===
+state_file_for_runtime()  { echo "$(runtime_root_for_key "$1")/ba-kit/state.json"; }
+
+write_state_v2() {
+  local key="$1" state_json="$2"
+  local state_file
+  state_file=$(state_file_for_runtime "$key")
+  mkdir -p "$(dirname "$state_file")"
+  echo "$state_json" > "${state_file}.tmp"
+  mv "${state_file}.tmp" "$state_file"
+}
+
+# === INSTALL-SPECIFIC: Preflight mutation across all selected runtimes ===
+install_preflight() {
+  local key
+  for key in "$@"; do
+    local root
+    root=$(runtime_root_for_key "$key")
+
+    # Check no existing install of different product
+    local pfile
+    pfile=$(runtime_product_file "$key")
+    if [ -f "$pfile" ]; then
+      local existing
+      existing=$(cat "$pfile")
+      if [ "$existing" != "$SELECTED_PRODUCT" ]; then
+        echo "Lỗi: ${SELECTED_PRODUCT} không thể cài đè lên ${existing}."
+        echo "Gỡ ${existing} trước: ba-kit uninstall --runtime ${key}"
+        exit 1
+      fi
+    fi
+
+    if [ -f "$(runtime_recovery_marker_for_key "$key")" ]; then
+      echo "Lỗi: ${key} cần khôi phục trước khi tiếp tục. Chạy ba-kit doctor." >&2
+      exit 1
+    fi
+  done
+
+  if [ "$SELECTED_PROFILE" = "solo-basic" ]; then
+    validate_solo_release_payload "$EXTRACT_DIR"
+  fi
+}
+
+runtime_recovery_marker_for_key() {
+  echo "$(runtime_root_for_key "$1")/ba-kit/RECOVERY_REQUIRED.json"
+}
+
+# Emit only files this install may change. Never snapshot whole runtime roots:
+# they contain user-owned settings, skills, caches, and unrelated integrations.
+transaction_runtime_paths() {
+  local key="$1" manifest_key runtime_path
+  while IFS= read -r manifest_key; do
+    runtime_path=$(manifest_key_to_runtime_path "$SELECTED_PROFILE" "$key" "$manifest_key" 2>/dev/null) || continue
+    [ -n "$runtime_path" ] && printf '%s\n' "$runtime_path"
+  done < <(jq -r 'keys[]' "$EXTRACT_DIR/release-manifest.json")
+  printf '%s\n' \
+    "ba-kit/state.json" \
+    "ba-kit/VERSION" \
+    "ba-kit/PRODUCT" \
+    "ba-kit/PRODUCT_ID" \
+    "ba-kit/release-manifest.json" \
+    "ba-kit/RECOVERY_REQUIRED.json" \
+    | sort -u
+}
+
+snapshot_transaction_runtime() {
+  local transaction_dir="$1" key="$2" root rel source snapshot record
+  root=$(runtime_root_for_key "$key")
+  snapshot="${transaction_dir}/${key}"
+  record="${snapshot}/records.tsv"
+  mkdir -p "${snapshot}/files"
+  : > "$record"
+
+  while IFS= read -r rel; do
+    [ -z "$rel" ] && continue
+    source="${root}/${rel}"
+    if [ -L "$source" ]; then
+      printf 'symlink\t%s\t%s\n' "$rel" "$(readlink "$source")" >> "$record"
+    elif [ -f "$source" ]; then
+      mkdir -p "$(dirname "${snapshot}/files/${rel}")"
+      cp -p "$source" "${snapshot}/files/${rel}"
+      printf 'file\t%s\t\n' "$rel" >> "$record"
+    else
+      printf 'absent\t%s\t\n' "$rel" >> "$record"
+    fi
+  done < <(transaction_runtime_paths "$key")
+}
+
+restore_transaction_runtime() {
+  local transaction_dir="$1" key="$2" root snapshot kind rel target destination failed=0
+  root=$(runtime_root_for_key "$key")
+  snapshot="${transaction_dir}/${key}"
+  while IFS=$'\t' read -r kind rel target; do
+    [ -z "$rel" ] && continue
+    destination="${root}/${rel}"
+    case "$kind" in
+      file)
+        mkdir -p "$(dirname "$destination")" || failed=1
+        cp -p "${snapshot}/files/${rel}" "$destination" || failed=1
+        ;;
+      symlink)
+        mkdir -p "$(dirname "$destination")" || failed=1
+        rm -f "$destination" || failed=1
+        ln -s "$target" "$destination" || failed=1
+        ;;
+      absent)
+        rm -f "$destination" || failed=1
+        ;;
+    esac
+  done < "${snapshot}/records.tsv"
+  return "$failed"
+}
+
+rollback_install_transaction() {
+  local transaction_dir="$1" index key failed=0
+  index=$((${#TRANSACTION_KEYS[@]} - 1))
+  while [ "$index" -ge 0 ]; do
+    key="${TRANSACTION_KEYS[$index]}"
+    restore_transaction_runtime "$transaction_dir" "$key" || {
+      failed=1
+      mkdir -p "$(dirname "$(runtime_recovery_marker_for_key "$key")")"
+      printf '{"status":"recovery-required","operation":"install"}\n' \
+        > "$(runtime_recovery_marker_for_key "$key")"
+    }
+    index=$((index - 1))
+  done
+  return "$failed"
+}
+
+transaction_failed() {
+  local status="$1"
+  trap - ERR INT TERM
+  echo "Lỗi: cài đặt thất bại, đang khôi phục các runtime đã thay đổi..." >&2
+  rollback_install_transaction "$TRANSACTION_DIR" || \
+    echo "Lỗi: một runtime cần khôi phục thủ công; chạy ba-kit doctor." >&2
+  rm -rf "$TRANSACTION_DIR"
+  exit "$status"
+}
+
+apply_runtime_transaction() {
+  local key
+  TRANSACTION_KEYS=("$@")
+  TRANSACTION_DIR=$(mktemp -d "${TMP_DIR}/ba-kit-transaction.XXXXXX")
+  for key in "${TRANSACTION_KEYS[@]}"; do
+    snapshot_transaction_runtime "$TRANSACTION_DIR" "$key"
+  done
+
+  trap 'transaction_failed "$?"' ERR INT TERM
+  for key in "${TRANSACTION_KEYS[@]}"; do
+    install_runtime_payload "$key"
+  done
+  trap - ERR INT TERM
+  rm -rf "$TRANSACTION_DIR"
+}
+
+# === INSTALL-SPECIFIC: Apply payload for one runtime ===
+install_runtime_payload() {
+  local key="$1"
+  local root scope label
+  root=$(runtime_root_for_key "$key")
+  scope=$(runtime_scope_for_key "$key")
+  label=$(runtime_label_for_key "$key")
+
+  local state_dir="${root}/ba-kit"
+  mkdir -p "$state_dir"
+
+  # Build schema-v2 state
+  local generation=1
+  local state_json
+  state_json=$(jq -n \
+    --arg schema "2" \
+    --arg gen "$generation" \
+    --arg pid "$SELECTED_PRODUCT_ID" \
+    --arg pname "$SELECTED_PRODUCT" \
+    --arg prof "$SELECTED_PROFILE" \
+    --arg ver "${SELECTED_VERSION#v}" \
+    --arg status "installed" \
+    '{schema_version: ($schema|tonumber), generation: ($gen|tonumber), product_id: $pid, product_name: $pname, profile: $prof, version: $ver, status: $status, files: {}}')
+
+  local created=0 updated=0 preserved=0
+  local old_manifest="{}"
+  [ -f "$(runtime_manifest_file "$key")" ] && old_manifest=$(cat "$(runtime_manifest_file "$key")")
+
+  # Read release manifest for this install
+  local release_manifest
+  release_manifest=$(cat "$EXTRACT_DIR/release-manifest.json")
+
+  # Process each component from profile
+  while IFS='|' read -r src_rel dest_rel prefix; do
+    [ -z "$prefix" ] && continue
+    local src_dir="$EXTRACT_DIR/$src_rel"
+
+    [ ! -d "$src_dir" ] && continue
+
+    # For each file in release manifest matching this component prefix
+    local keys
+    keys=$(echo "$release_manifest" | jq -r "keys[] | select(startswith(\"${prefix}\"))" 2>/dev/null)
+
+    while IFS= read -r manifest_key; do
+      [ -z "$manifest_key" ] && continue
+      local rel_path="${manifest_key#"$prefix"}"
+      local dest_path="${root}/${dest_rel}/${rel_path}"
+      mkdir -p "$(dirname "$dest_path")"
+
+      local new_hash
+      new_hash=$(echo "$release_manifest" | jq -r ".\"$manifest_key\"")
+
+      if [ ! -f "$dest_path" ]; then
+        # New file
+        cp "$src_dir/$rel_path" "$dest_path"
+        created=$((created + 1))
+        state_json=$(echo "$state_json" | jq --arg k "$manifest_key" --arg h "$new_hash" \
+          '.files[$k] = {"source_sha256": $h, "status": "managed"}')
+      else
+        local current_hash old_hash
+        current_hash=$(sha256 "$dest_path")
+        old_hash=$(echo "$old_manifest" | jq -r ".\"$manifest_key\" // empty" 2>/dev/null)
+
+        if [ "$current_hash" = "$new_hash" ]; then
+          updated=$((updated + 1))
+          state_json=$(echo "$state_json" | jq --arg k "$manifest_key" --arg h "$new_hash" \
+            '.files[$k] = {"source_sha256": $h, "status": "managed"}')
+        elif [ -n "$old_hash" ] && [ "$current_hash" = "$old_hash" ]; then
+          cp "$src_dir/$rel_path" "$dest_path"
+          updated=$((updated + 1))
+          state_json=$(echo "$state_json" | jq --arg k "$manifest_key" --arg h "$new_hash" \
+            '.files[$k] = {"source_sha256": $h, "status": "managed"}')
+        elif [ -n "$old_hash" ]; then
+          preserved=$((preserved + 1))
+          state_json=$(echo "$state_json" | jq --arg k "$manifest_key" --arg h "$old_hash" \
+            '.files[$k] = {"source_sha256": $h, "status": "preserved-modified"}')
+        elif is_protected "$rel_path"; then
+          preserved=$((preserved + 1))
+        else
+          # Unmodified, adopt
+          cp "$src_dir/$rel_path" "$dest_path"
+          updated=$((updated + 1))
+          state_json=$(echo "$state_json" | jq --arg k "$manifest_key" --arg h "$new_hash" \
+            '.files[$k] = {"source_sha256": $h, "status": "managed"}')
+        fi
+      fi
+    done <<< "$keys"
+  done < <(profile_components "$SELECTED_PROFILE" "$key")
+
+  echo "  ${created} file mới | ${updated} file cập nhật | ${preserved} file giữ nguyên"
+
+  # Increment generation and write
+  generation=$((generation + 1))
+  state_json=$(echo "$state_json" | jq --arg g "$generation" '.generation = ($g | tonumber)')
+  write_state_v2 "$key" "$state_json"
+
+  # Write compatibility projections
+  mkdir -p "$state_dir"
+  echo "$SELECTED_VERSION" > "$(runtime_version_file "$key")"
+  echo "$SELECTED_PRODUCT" > "$(runtime_product_file "$key")"
+  echo "${SELECTED_PRODUCT_ID:-}" > "${state_dir}/PRODUCT_ID"
+  cp "$EXTRACT_DIR/release-manifest.json" "$(runtime_manifest_file "$key")"
+
+}
+
+post_install_runtimes() {
+  local key root
+  for key in "$@"; do
+    root=$(runtime_root_for_key "$key")
+    if [ "$SELECTED_PROFILE" = "standard" ] && [ "$key" = "claude" ]; then
+      post_install_standard_claude "$root"
+    elif [ "$SELECTED_PROFILE" = "solo-basic" ]; then
+      post_install_solo "$root"
+    fi
+  done
+}
+
+# Standard Claude post-install (hooks, pip, framework binary, core symlink)
+post_install_standard_claude() {
+  local root="$1"
+  echo "Đang hoàn tất cài đặt..."
+
+  if [ -f "$EXTRACT_DIR/.local/bin/ba-kit" ]; then
+    mkdir -p "$root/ba-kit"
+    cp "$EXTRACT_DIR/.local/bin/ba-kit" "$root/ba-kit/ba-kit"
+    chmod +x "$root/ba-kit/ba-kit"
+    if [ -f "$BIN_DIR/ba-kit" ] && ! [ -L "$BIN_DIR/ba-kit" ]; then
+      rm -f "$BIN_DIR/ba-kit"
+      echo "  Removed stale framework binary at ${BIN_DIR}/ba-kit"
+    fi
+  fi
+
+  register_hooks "$root"
+
+  if [ -f "$root/ba-kit/scripts/requirements.txt" ]; then
+    if command -v python3 &>/dev/null; then
+      python3 -m pip install -r "$root/ba-kit/scripts/requirements.txt" --quiet 2>/dev/null || true
+    fi
+  fi
+
+  if [ -d "$root/ba-kit/core" ]; then
+    ln -sfn "$root/ba-kit/core" "$root/core" 2>/dev/null || true
+  fi
+
+  echo "  Hoàn tất."
+}
+
+# Solo post-install: no hooks, no pip, no symlinks, no settings
+post_install_solo() {
+  local root="$1"
+  echo "  Solo Basic: không cần hooks, pip, hoặc symlink."
+}
+
+# Legacy post_install shim
+post_install() {
+  local root="$1"
+  if [ "${SELECTED_PROFILE:-standard}" = "solo-basic" ]; then
+    post_install_solo "$root"
+  else
+    post_install_standard_claude "$root"
+  fi
 }
 
 # ============================================================
@@ -1171,7 +1856,7 @@ cmd_install() {
     esac
   done
 
-  parse_runtime_flag "$target_runtime"  # sets SELECTED_RUNTIME_KEYS, validates
+  parse_runtime_flag "$target_runtime"
 
   echo ""
   echo "=============================================="
@@ -1179,12 +1864,11 @@ cmd_install() {
   echo "=============================================="
   echo ""
 
-  check_prereqs                         # B1
-  select_product                        # B2: probe repos + select
-  select_version "$target_version"      # B3
+  check_common_prereqs
+  select_product
+  select_version "$target_version"
 
-  # B4: prevent install over different product, per selected runtime.
-  # Skip runtimes already at the target version (silently if 2+ selected).
+  # Product conflict check per runtime
   local -a RUNTIMES_TO_PROCESS=()
   for key in "${SELECTED_RUNTIME_KEYS[@]}"; do
     if check_cross_product_for_runtime "$key"; then
@@ -1196,11 +1880,13 @@ cmd_install() {
     exit 0
   fi
 
-  download_release                      # B5
-  extract_release                       # B7
+  download_release
+  extract_release
+  install_preflight "${RUNTIMES_TO_PROCESS[@]}"
 
   echo "Đang cài đặt files..."
 
+  # Keep user-visible backups, then commit every runtime as one transaction.
   for key in "${RUNTIMES_TO_PROCESS[@]}"; do
     local root scope label
     root=$(runtime_root_for_key "$key")
@@ -1210,25 +1896,155 @@ cmd_install() {
     echo ""
     echo "-- ${label} (${root}) --"
 
-    local reconciled_manifest="${TMP_DIR}/reconciled-${key}.json"
-    echo '{}' > "$reconciled_manifest"
-
-    if [ "$scope" = "full" ]; then
-      do_backup "$root" "$(runtime_backup_dir "$key")"                          # B6
-      merge_files "$EXTRACT_DIR/.claude" "$root" "$(runtime_manifest_file "$key")" false "$reconciled_manifest"           # B8a
-      merge_files "$EXTRACT_DIR/ba-kit" "$root/ba-kit" "$(runtime_manifest_file "$key")" true "$reconciled_manifest" # B8b
-      post_install "$root"             # B9
-    else
-      do_backup "$root/skills" "$(runtime_backup_dir "$key")"                   # B6
-      merge_files "$EXTRACT_DIR/.claude/skills" "$root/skills" "$(runtime_manifest_file "$key")" false "$reconciled_manifest" # B8
+    # Backup existing state before mutation
+    local backup_dir
+    backup_dir=$(runtime_backup_dir "$key")
+    if [ -d "$root" ] && [ "$(ls -A "$root" 2>/dev/null)" ]; then
+      do_backup "$root" "$backup_dir"
     fi
 
-    save_state "$(runtime_version_file "$key")" "$(runtime_product_file "$key")" \
-               "$(runtime_manifest_file "$key")" "$reconciled_manifest"         # B10
   done
 
-  cleanup                               # B11
-  show_result "${RUNTIMES_TO_PROCESS[@]}"  # B12
+  apply_runtime_transaction "${RUNTIMES_TO_PROCESS[@]}"
+  post_install_runtimes "${RUNTIMES_TO_PROCESS[@]}"
+
+  cleanup
+  show_result "${RUNTIMES_TO_PROCESS[@]}"
+}
+
+# ============================================================
+# STATE RESOLVER — schema-v2 first, legacy fallback
+# ============================================================
+# Product aliases: current name + historical aliases
+product_alias_of() {
+  local id="$1"
+  case "$id" in
+    ba-kit) echo "BA-kit" ;;
+    ba-kit-solo-pro) echo "BA-kit Solo Pro" ;;
+    ba-kit-solo-basic) echo "BA-kit Solo Basic" ;;
+    *) echo "" ;;
+  esac
+}
+
+product_id_for_name() {
+  local name="$1"
+  case "$name" in
+    "BA-kit") echo "ba-kit" ;;
+    "BA-kit Solo Pro") echo "ba-kit-solo-pro" ;;
+    "BA-kit Solo Basic") echo "ba-kit-solo-basic" ;;
+    *) echo "" ;;
+  esac
+}
+
+# Resolve runtime state — canonical schema-v2 first, then legacy
+# Sets: STATE_SOURCE, STATE_DATA, STATE_PROFILE, STATE_PRODUCT_ID, STATE_VERSION
+resolve_runtime_state() {
+  local key="$1"
+  local mode="${2:-mutating}"  # mutating | read-only
+
+  STATE_SOURCE=""; STATE_DATA="{}"; STATE_PROFILE=""; STATE_PRODUCT_ID=""; STATE_VERSION=""
+  local state_file
+  state_file=$(state_file_for_runtime "$key")
+
+  local recovery_marker
+  recovery_marker=$(runtime_recovery_marker_for_key "$key")
+  if [ -f "$recovery_marker" ]; then
+    STATE_SOURCE="recovery"
+    STATE_DATA=$(cat "$recovery_marker")
+    if [ "$mode" = "mutating" ]; then
+      echo "Lỗi: trạng thái cần khôi phục tại $(runtime_label_for_key "$key"). Chạy ba-kit doctor để xem hướng dẫn." >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  # Schema-v2 state.json
+  if [ -f "$state_file" ]; then
+    local st
+    st=$(jq -r '.status // "installed"' "$state_file" 2>/dev/null)
+    if [ "$st" = "recovery-required" ] && [ "$mode" = "mutating" ]; then
+      echo "Lỗi: trạng thái cần khôi phục tại $(runtime_label_for_key "$key"). Chạy ba-kit doctor để xem hướng dẫn." >&2
+      STATE_SOURCE="recovery"
+      return 1
+    fi
+    STATE_SOURCE="v2"
+    STATE_DATA=$(cat "$state_file")
+    STATE_PRODUCT_ID=$(echo "$STATE_DATA" | jq -r '.product_id // ""')
+    STATE_PROFILE=$(echo "$STATE_DATA" | jq -r '.profile // ""')
+    STATE_VERSION=$(echo "$STATE_DATA" | jq -r '.version // ""')
+    return 0
+  fi
+
+  # Legacy detection: VERSION + PRODUCT + release-manifest.json
+  local vf pf mf
+  vf=$(runtime_version_file "$key")
+  pf=$(runtime_product_file "$key")
+  mf=$(runtime_manifest_file "$key")
+
+  local has_v=false has_p=false has_m=false
+  [ -f "$vf" ] && has_v=true
+  [ -f "$pf" ] && has_p=true
+  [ -f "$mf" ] && has_m=true
+
+  # No fragments = empty runtime
+  if ! $has_v && ! $has_p && ! $has_m; then
+    # Check for orphan transaction/recovery fragments
+    local rroot
+    rroot=$(runtime_root_for_key "$key")
+    local tf="${rroot}/ba-kit/transaction.json"
+    local rf="${rroot}/ba-kit/RECOVERY_REQUIRED.json"
+    if [ -f "$tf" ] || [ -f "$rf" ]; then
+      echo "Lỗi: trạng thái BA-kit chưa đầy đủ tại $(runtime_label_for_key "$key"). Không có file nào được thay đổi." >&2
+      return 1
+    fi
+    STATE_SOURCE="empty"
+    return 0
+  fi
+
+  # Coherent legacy: VERSION + PRODUCT + manifest all present
+  if $has_v && $has_p && $has_m; then
+    local product_name
+    product_name=$(cat "$pf")
+    local pid
+    pid=$(product_id_for_name "$product_name")
+    if [ -z "$pid" ]; then
+      echo "Lỗi: sản phẩm '${product_name}' không được hỗ trợ tại $(runtime_label_for_key "$key")." >&2
+      STATE_SOURCE="unknown"
+      return 1
+    fi
+    STATE_SOURCE="legacy"
+    STATE_PRODUCT_ID="$pid"
+    STATE_PROFILE=$(product_index_for_id "$pid" >/dev/null 2>&1 && echo "${PRODUCT_PROFILES[$(product_index_for_id "$pid")]}" || echo "standard")
+    STATE_VERSION=$(cat "$vf")
+    return 0
+  fi
+
+  # Partial/orphan state
+  echo "Lỗi: trạng thái BA-kit chưa đầy đủ tại $(runtime_label_for_key "$key"). Không có file nào được thay đổi." >&2
+  STATE_SOURCE="partial"
+  return 1
+}
+
+# === State write helpers ===
+commit_canonical_state() {
+  local key="$1" next_state_json="$2"
+  local state_file
+  state_file=$(state_file_for_runtime "$key")
+  local dir
+  dir=$(dirname "$state_file")
+  mkdir -p "$dir"
+
+  echo "$next_state_json" > "${state_file}.tmp"
+  mv "${state_file}.tmp" "$state_file"
+
+  # Write compatibility projections
+  local vid pid pname ver
+  vid=$(echo "$next_state_json" | jq -r '.product_id // ""')
+  pid=$(echo "$next_state_json" | jq -r '.product_name // ""')
+  ver=$(echo "$next_state_json" | jq -r '.version // ""')
+  echo "$ver" > "$(runtime_version_file "$key")"
+  echo "$pid" > "$(runtime_product_file "$key")"
+  echo "$vid" > "${dir}/PRODUCT_ID"
 }
 
 # ============================================================
@@ -1241,12 +2057,15 @@ cmd_update() {
   echo "=============================================="
   echo ""
 
-  check_prereqs
+  check_common_prereqs
 
-  # Auto-detect every runtime with existing state — no --runtime flag.
+  # Auto-detect runtimes with canonical or legacy state
   local -a DETECTED_KEYS=()
   for key in "${RUNTIME_KEYS[@]}"; do
-    [ -f "$(runtime_version_file "$key")" ] && DETECTED_KEYS+=("$key")
+    resolve_runtime_state "$key" "read-only" || true
+    if [ "${STATE_SOURCE:-empty}" != "empty" ]; then
+      DETECTED_KEYS+=("$key")
+    fi
   done
 
   if [ ${#DETECTED_KEYS[@]} -eq 0 ]; then
@@ -1255,164 +2074,119 @@ cmd_update() {
     exit 1
   fi
 
-  # Group detected runtimes by their recorded product (bash 3.2: parallel
-  # arrays, not associative — small N so a linear scan is fine).
-  local -a GROUP_LABELS=() GROUP_MEMBERS=()
+  # Group by product-id from resolved state
+  local -a GROUP_IDS=() GROUP_KEYS=()
   for key in "${DETECTED_KEYS[@]}"; do
-    local product
-    product=$(cat "$(runtime_product_file "$key")" 2>/dev/null)
-    [ -z "$product" ] && continue
+    resolve_runtime_state "$key" "mutating" || true
     local idx=-1
-    for i in "${!GROUP_LABELS[@]}"; do
-      if [ "${GROUP_LABELS[$i]}" = "$product" ]; then
-        idx=$i
-        break
+    for i in "${!GROUP_IDS[@]}"; do
+      if [ "${GROUP_IDS[$i]}" = "$STATE_PRODUCT_ID" ]; then
+        idx=$i; break
       fi
     done
     if [ "$idx" -eq -1 ]; then
-      GROUP_LABELS+=("$product")
-      GROUP_MEMBERS+=("$key")
+      GROUP_IDS+=("$STATE_PRODUCT_ID")
+      GROUP_KEYS+=("$key")
     else
-      GROUP_MEMBERS[$idx]="${GROUP_MEMBERS[$idx]},${key}"
+      GROUP_KEYS[$idx]="${GROUP_KEYS[$idx]},${key}"
     fi
   done
 
-  if [ ${#GROUP_LABELS[@]} -gt 1 ]; then
-    echo "Đang cập nhật ${#GROUP_LABELS[@]} nhóm sản phẩm riêng biệt..."
+  if [ ${#GROUP_IDS[@]} -gt 1 ]; then
+    echo "Đang cập nhật ${#GROUP_IDS[@]} nhóm sản phẩm..."
     echo ""
   fi
 
   local -a ALL_PROCESSED=()
+  for gi in "${!GROUP_IDS[@]}"; do
+    local gid="${GROUP_IDS[$gi]}"
+    local alias
+    alias=$(product_alias_of "$gid")
+    local -a gkeys
+    IFS=',' read -r -a gkeys <<< "${GROUP_KEYS[$gi]}"
 
-  for gi in "${!GROUP_LABELS[@]}"; do
-    local group_product="${GROUP_LABELS[$gi]}"
-    local -a group_keys
-    IFS=',' read -r -a group_keys <<< "${GROUP_MEMBERS[$gi]}"
-
-    echo "Sản phẩm: ${group_product}"
-    for key in "${group_keys[@]}"; do
-      local cur label
-      cur=$(cat "$(runtime_version_file "$key")")
+    echo "Sản phẩm: ${alias} (${gid})"
+    for key in "${gkeys[@]}"; do
+      local label
       label=$(runtime_label_for_key "$key")
-      echo "  ${label}: ${cur}"
+      resolve_runtime_state "$key" "read-only" || true
+      echo "  ${label}: ${STATE_VERSION:-unknown}"
     done
 
-    local found=false repo="" purl=""
-    for i in "${!PRODUCT_NAMES[@]}"; do
-      if [ "${PRODUCT_NAMES[$i]}" = "$group_product" ]; then
-        repo="${PRODUCT_REPOS[$i]}"
-        purl="${PRODUCT_URLS[$i]}"
-        found=true
-        break
+    local repo="" purl="" vis="" prof="" idx
+    idx=$(product_index_for_id "$gid" 2>/dev/null) || {
+      echo "Lỗi: Sản phẩm '$gid' không được hỗ trợ."
+      exit 1
+    }
+    repo="${PRODUCT_REPOS[$idx]}"
+    purl="${PRODUCT_URLS[$idx]}"
+    vis="${PRODUCT_VISIBILITIES[$idx]}"
+    prof="${PRODUCT_PROFILES[$idx]}"
+
+    # Verify access for private products
+    if [ "$vis" = "private" ]; then
+      require_private_github_access "$alias"
+      if ! gh api "repos/${repo}" --jq '.private' &>/dev/null 2>&1; then
+        echo "Quyền truy cập ${alias} đã bị thu hồi."
+        exit 1
       fi
-    done
-
-    if ! $found; then
-      echo "Lỗi: Sản phẩm '${group_product}' không được hỗ trợ."
-      echo "Vui lòng cài lại: ba-kit install --runtime ${group_keys[*]}"
-      exit 1
-    fi
-
-    # Verify still have access
-    if ! gh api "repos/${repo}" --jq '.private' &>/dev/null 2>&1; then
-      echo ""
-      echo "=============================================="
-      echo "  KHÔNG CÓ QUYỀN TRUY CẬP"
-      echo "=============================================="
-      echo ""
-      echo "Quyền truy cập ${group_product} đã bị thu hồi."
-      echo "File đã cài vẫn dùng được nhưng không thể cập nhật."
-      echo "Mua lại: ${purl:-https://polar.sh/bakit-org/products}"
-      echo "=============================================="
-      exit 1
     fi
 
     local latest
-    latest=$(gh api "repos/${repo}/releases/latest" --jq '.tag_name' 2>/dev/null) || {
+    latest=$(get_release_json "latest" | jq -r '.tag_name') || {
       echo "Lỗi: Không thể kiểm tra phiên bản mới."
       exit 1
     }
     echo "Phiên bản mới nhất: ${latest}"
 
-    # Skip the whole group only if every member is already at latest
     local all_latest=true
-    for key in "${group_keys[@]}"; do
-      local cur
-      cur=$(cat "$(runtime_version_file "$key")")
-      if [ "$cur" != "$latest" ]; then
-        all_latest=false
-        break
+    for key in "${gkeys[@]}"; do
+      resolve_runtime_state "$key" "read-only" || true
+      if [ "${STATE_VERSION:-}" != "$latest" ]; then
+        all_latest=false; break
       fi
     done
     if $all_latest; then
-      echo "Đang dùng phiên bản mới nhất cho nhóm này."
+      echo "Đang dùng phiên bản mới nhất."
       echo ""
       continue
     fi
-
-    local changelog
-    changelog=$(gh api "repos/${repo}/releases/latest" --jq '.body // ""' 2>/dev/null)
-    echo ""
-    echo "Thay đổi trong ${latest}:"
-    echo "----------------------------------------"
-    echo "${changelog:-}" | head -30
-    echo "----------------------------------------"
-    echo ""
 
     read -r -p "Cập nhật lên ${latest}? (Y/n): " confirm
     if [ "$(lowercase "$confirm")" = "n" ]; then
-      echo "Đã hủy nhóm ${group_product}."
+      echo "Đã hủy nhóm ${alias}."
       echo ""
       continue
     fi
 
-    echo ""
-    echo "Đang cập nhật..."
-    SELECTED_PRODUCT="$group_product"
-    SELECTED_REPO="$repo"
+    # Set globals and run install path
+    select_product_index "$idx"
     SELECTED_VERSION="$latest"
-    RELEASE_NOTES="$changelog"
     download_release
     extract_release
+    install_preflight "${gkeys[@]}"
 
     echo "Đang cập nhật files..."
-
-    for key in "${group_keys[@]}"; do
-      local root scope label
+    for key in "${gkeys[@]}"; do
+      local root label
       root=$(runtime_root_for_key "$key")
-      scope=$(runtime_scope_for_key "$key")
       label=$(runtime_label_for_key "$key")
-
       echo ""
       echo "-- ${label} (${root}) --"
-
-      local reconciled_manifest="${TMP_DIR}/reconciled-${key}.json"
-      echo '{}' > "$reconciled_manifest"
-
-      if [ "$scope" = "full" ]; then
-        do_backup "$root" "$(runtime_backup_dir "$key")"
-        merge_files "$EXTRACT_DIR/.claude" "$root" "$(runtime_manifest_file "$key")" false "$reconciled_manifest"
-        merge_files "$EXTRACT_DIR/ba-kit" "$root/ba-kit" "$(runtime_manifest_file "$key")" true "$reconciled_manifest"
-        post_install "$root"
-      else
-        do_backup "$root/skills" "$(runtime_backup_dir "$key")"
-        merge_files "$EXTRACT_DIR/.claude/skills" "$root/skills" "$(runtime_manifest_file "$key")" false "$reconciled_manifest"
-      fi
-
-      save_state "$(runtime_version_file "$key")" "$(runtime_product_file "$key")" \
-                 "$(runtime_manifest_file "$key")" "$reconciled_manifest"
-      ALL_PROCESSED+=("$key")
+      local backup_dir
+      backup_dir=$(runtime_backup_dir "$key")
+      [ -d "$root" ] && [ "$(ls -A "$root" 2>/dev/null)" ] && do_backup "$root" "$backup_dir"
     done
-
+    apply_runtime_transaction "${gkeys[@]}"
+    post_install_runtimes "${gkeys[@]}"
+    ALL_PROCESSED+=("${gkeys[@]}")
     cleanup
     echo ""
   done
 
-  if [ ${#ALL_PROCESSED[@]} -eq 0 ]; then
-    exit 0
+  if [ ${#ALL_PROCESSED[@]} -gt 0 ]; then
+    show_result "${ALL_PROCESSED[@]}"
   fi
-
-  show_result "${ALL_PROCESSED[@]}"
 }
 
 # ============================================================
@@ -1421,104 +2195,108 @@ cmd_update() {
 cmd_doctor() {
   echo ""
   echo "=============================================="
-  echo "  BA-KIT HEALTH CHECK"
+  echo "  BA-kit HEALTH CHECK"
   echo "=============================================="
   echo ""
 
-  # Product + Version — per runtime
   local any_installed=false
   for key in "${RUNTIME_KEYS[@]}"; do
-    local label pfile vfile
+    local label
     label=$(runtime_label_for_key "$key")
-    pfile=$(runtime_product_file "$key")
-    vfile=$(runtime_version_file "$key")
-    if [ -f "$pfile" ] && [ -f "$vfile" ]; then
-      echo "[OK]   ${label}: $(cat "$pfile") $(cat "$vfile")"
-      any_installed=true
-    elif [ -f "$vfile" ]; then
-      echo "[OK]   ${label}: $(cat "$vfile") (chưa có PRODUCT file — cài lại để cập nhật)"
-      any_installed=true
-    else
-      echo "[CHƯA] ${label}: chưa được cài đặt"
-    fi
+    resolve_runtime_state "$key" "read-only" || true
+
+    case "${STATE_SOURCE:-empty}" in
+      v2)
+        local st
+        st=$(echo "$STATE_DATA" | jq -r '.status')
+        local alias
+        alias=$(product_alias_of "$STATE_PRODUCT_ID")
+        echo "[OK]   ${label}: ${alias} ${STATE_VERSION} (schema-v2, ${st})"
+        any_installed=true
+        ;;
+      legacy)
+        local alias
+        alias=$(product_alias_of "$STATE_PRODUCT_ID")
+        echo "[OK]   ${label}: ${alias} ${STATE_VERSION} (legacy)"
+        any_installed=true
+        ;;
+      recovery)
+        echo "[CẦN KHÔI PHỤC] ${label}: giao dịch trước đó chưa được khôi phục hoàn toàn"
+        any_installed=true
+        ;;
+      empty)
+        echo "[CHƯA] ${label}: chưa cài đặt"
+        ;;
+    esac
   done
+
   if ! $any_installed; then
     echo "       Chạy: ba-kit install"
   fi
 
-  # gh CLI
-  if command -v gh &>/dev/null; then
-    local gh_ver
-    gh_ver=$(gh --version 2>/dev/null | head -1 || echo "unknown")
-    echo "[OK]   GitHub CLI: ${gh_ver}"
+  # jq and curl (always needed)
+  echo "[OK]   jq: $(jq --version 2>/dev/null || echo 'missing')"
+  echo "[OK]   curl: $(curl --version 2>/dev/null | head -1 || echo 'missing')"
+
+  # gh: only needed for private products
+  if github_auth_available; then
+    echo "[OK]   GitHub CLI: đã đăng nhập (cho sản phẩm riêng tư)"
   else
-    echo "[THIẾU] GitHub CLI chưa cài"
-    echo "        macOS: brew install gh"
-    echo "        Khác: https://cli.github.com"
+    echo "[OK]   GitHub CLI: chưa đăng nhập (Solo Basic vẫn dùng được)"
   fi
 
-  # jq
-  if command -v jq &>/dev/null; then
-    echo "[OK]   jq: $(jq --version 2>/dev/null || echo "unknown")"
-  else
-    echo "[THIẾU] jq chưa cài"
-    echo "        macOS: brew install jq | Windows: winget install jqlang.jq"
-  fi
-
-  # gh auth
-  if gh auth status -h github.com &>/dev/null 2>&1; then
-    local gh_user
-    gh_user=$(gh api user --jq '.login' 2>/dev/null || echo "unknown")
-    echo "[OK]   GitHub auth: ${gh_user}"
-  else
-    echo "[THIẾU] GitHub chưa đăng nhập"
-    echo "        Chạy: gh auth login"
-  fi
-
-  # Access check for each product
   echo ""
-  echo "Quyền truy cập sản phẩm:"
-  for i in "${!PRODUCT_NAMES[@]}"; do
-    local name="${PRODUCT_NAMES[$i]}"
-    local repo="${PRODUCT_REPOS[$i]}"
-    local url="${PRODUCT_URLS[$i]}"
-    if gh api "repos/${repo}" --jq '.private' &>/dev/null 2>&1; then
-      echo "  [OK]   ${name} — có quyền truy cập"
+  echo "Quyền truy cập:"
+  for i in "${!PRODUCT_IDS[@]}"; do
+    local vid="${PRODUCT_IDS[$i]}"
+    local vname="${PRODUCT_NAMES[$i]}"
+    local vis="${PRODUCT_VISIBILITIES[$i]}"
+    if [ "$vis" = "public" ]; then
+      echo "  [OK]   ${vname} — miễn phí, luôn có sẵn"
+    elif github_auth_available; then
+      local repo="${PRODUCT_REPOS[$i]}"
+      if gh api "repos/${repo}" --jq '.private' &>/dev/null 2>&1; then
+        echo "  [OK]   ${vname} — có quyền truy cập"
+      else
+        echo "  [THIẾU] ${vname} — chưa có quyền"
+      fi
     else
-      echo "  [THIẾU] ${name} — chưa có quyền (mua: ${url})"
+      echo "  [THIẾU] ${vname} — cần gh auth login"
     fi
   done
 
-  # Python
-  if command -v python3 &>/dev/null; then
-    local py_ver
-    py_ver=$(python3 --version 2>&1)
-    echo ""
-    echo "[OK]   Python: ${py_ver}"
-  else
-    echo ""
-    echo "[CẢNH BÁO] Python3 chưa cài (cần cho guardrail scripts)"
-  fi
-
-  # Components — per runtime, scoped to what that runtime actually gets
+  # Components for installed runtimes
   echo ""
   echo "Components đã cài:"
   for key in "${RUNTIME_KEYS[@]}"; do
-    local root scope label
+    resolve_runtime_state "$key" "read-only" || true
+    [ "${STATE_SOURCE:-empty}" = "empty" ] && continue
+
+    local root label
     root=$(runtime_root_for_key "$key")
-    scope=$(runtime_scope_for_key "$key")
     label=$(runtime_label_for_key "$key")
-    [ ! -f "$(runtime_version_file "$key")" ] && continue
 
     echo "  ${label}:"
-    if [ "$scope" = "full" ]; then
-      [ -d "$root/skills" ]    && echo "    Skills:    $(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ') thư mục"
-      [ -d "$root/agents" ]    && echo "    Agents:    $(ls -1 "$root/agents/" 2>/dev/null | wc -l | tr -d ' ') file"
-      [ -d "$root/templates" ] && echo "    Templates: $(ls -1 "$root/templates/" 2>/dev/null | wc -l | tr -d ' ') file"
-      [ -d "$root/hooks" ]     && echo "    Hooks:     $(ls -1 "$root/hooks/" 2>/dev/null | wc -l | tr -d ' ') file"
-      [ -d "$root/ba-kit" ]    && echo "    Core:      ${root}/ba-kit/"
+    if [ "$STATE_SOURCE" = "v2" ]; then
+      local scount tcount
+      scount=$(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ')
+      tcount=$(ls -1 "$root/templates/" 2>/dev/null | wc -l | tr -d ' ')
+      echo "    Skills:    ${scount}"
+      echo "    Templates: ${tcount}"
+
+      if [ "$STATE_PROFILE" = "solo-basic" ]; then
+        if [ -d "$root/core" ]; then echo "    Core:      ${root}/core/"; fi
+        echo "    Không có agents, hooks, scripts."
+      elif [ "$STATE_PROFILE" = "standard" ]; then
+        [ -d "$root/agents" ] && echo "    Agents:    $(ls -1 "$root/agents/" 2>/dev/null | wc -l | tr -d ' ') file"
+        [ -d "$root/hooks" ] && echo "    Hooks:     $(ls -1 "$root/hooks/" 2>/dev/null | wc -l | tr -d ' ') file"
+        [ -d "$root/ba-kit" ] && echo "    Core:      ${root}/ba-kit/"
+        if command -v python3 &>/dev/null; then
+          echo "    Python:    $(python3 --version 2>&1)"
+        fi
+      fi
     else
-      [ -d "$root/skills" ] && echo "    Skills: $(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ') thư mục"
+      [ -d "$root/skills" ] && echo "    Skills: $(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ') thư mục (legacy)"
     fi
   done
 
@@ -1531,17 +2309,24 @@ cmd_doctor() {
 cmd_version() {
   echo "BA-kit CLI: v${CLI_VERSION}"
   for key in "${RUNTIME_KEYS[@]}"; do
-    local label pfile vfile
+    local label
     label=$(runtime_label_for_key "$key")
-    pfile=$(runtime_product_file "$key")
-    vfile=$(runtime_version_file "$key")
-    if [ -f "$pfile" ] && [ -f "$vfile" ]; then
-      echo "  ${label}: $(cat "$pfile") $(cat "$vfile")"
-    elif [ -f "$vfile" ]; then
-      echo "  ${label}: $(cat "$vfile")"
-    else
-      echo "  ${label}: (chưa cài)"
-    fi
+    resolve_runtime_state "$key" "read-only" || true
+    case "${STATE_SOURCE:-empty}" in
+      v2)
+        local alias
+        alias=$(product_alias_of "$STATE_PRODUCT_ID")
+        echo "  ${label}: ${alias} v${STATE_VERSION}"
+        ;;
+      legacy)
+        local alias
+        alias=$(product_alias_of "$STATE_PRODUCT_ID")
+        echo "  ${label}: ${alias} ${STATE_VERSION} (legacy)"
+        ;;
+      empty)
+        echo "  ${label}: (chưa cài)"
+        ;;
+    esac
   done
 }
 
@@ -1565,16 +2350,16 @@ cmd_uninstall() {
     esac
   done
 
-  # No flag = auto-detect every runtime with existing state (backward
-  # compatible: existing users only ever have claude state, so this finds
-  # exactly claude, same as today).
   local -a TARGET_RUNTIME_KEYS=()
   if [ -n "$target_runtime" ]; then
     parse_runtime_flag "$target_runtime"
     TARGET_RUNTIME_KEYS=("${SELECTED_RUNTIME_KEYS[@]}")
   else
     for key in "${RUNTIME_KEYS[@]}"; do
-      [ -f "$(runtime_version_file "$key")" ] && TARGET_RUNTIME_KEYS+=("$key")
+      resolve_runtime_state "$key" "read-only" || true
+      if [ "${STATE_SOURCE:-empty}" != "empty" ]; then
+        TARGET_RUNTIME_KEYS+=("$key")
+      fi
     done
   fi
 
@@ -1590,15 +2375,13 @@ cmd_uninstall() {
   echo ""
   echo "Sẽ gỡ các runtime sau (có backup trước khi xóa):"
   for key in "${TARGET_RUNTIME_KEYS[@]}"; do
-    local label root pfile vfile product version
+    local label root
     label=$(runtime_label_for_key "$key")
     root=$(runtime_root_for_key "$key")
-    pfile=$(runtime_product_file "$key")
-    vfile=$(runtime_version_file "$key")
-    product="(không rõ)"; version="(không rõ)"
-    [ -f "$pfile" ] && product=$(cat "$pfile")
-    [ -f "$vfile" ] && version=$(cat "$vfile")
-    echo "  - ${label} (${root}): ${product} ${version}"
+    resolve_runtime_state "$key" "read-only" || true
+    local alias
+    alias=$(product_alias_of "${STATE_PRODUCT_ID:-}")
+    echo "  - ${label} (${root}): ${alias:-unknown} ${STATE_VERSION:-unknown}"
   done
   echo ""
 
@@ -1616,71 +2399,96 @@ cmd_uninstall() {
   done
 
   for key in "${TARGET_RUNTIME_KEYS[@]}"; do
-    local root scope label backup_dir backup_path
+    local root label
     root=$(runtime_root_for_key "$key")
-    scope=$(runtime_scope_for_key "$key")
     label=$(runtime_label_for_key "$key")
+    local backup_dir backup_path
     backup_dir=$(runtime_backup_dir "$key")
     backup_path="${backup_dir}/pre-uninstall-$(date +%Y-%m-%d-%H%M%S)"
+
+    resolve_runtime_state "$key" "mutating" || { echo "Lỗi: không thể đọc trạng thái ${label}."; exit 1; }
     echo "-- ${label} (${root}) --"
 
-    if [ "$scope" = "full" ]; then
-      mkdir -p "$backup_path"
-      if [ -d "$root" ]; then
-        _copy_scoped "$root" "$backup_path"
-        echo "Đã backup vào: ${backup_path}"
+    # Backup state + owned files
+    mkdir -p "$backup_path"
+    if [ "${STATE_SOURCE:-}" = "v2" ]; then
+      local state_file mf
+      state_file=$(state_file_for_runtime "$key")
+      [ -f "$state_file" ] && cp "$state_file" "$backup_path/state.json"
+      mf=$(runtime_manifest_file "$key")
+      [ -f "$mf" ] && cp "$mf" "$backup_path/release-manifest.json"
+
+      # Delete only unchanged managed files
+      local kept=0 deleted=0
+      local file_keys
+      file_keys=$(echo "$STATE_DATA" | jq -r '.files | keys[]' 2>/dev/null)
+      while IFS= read -r fk; do
+        [ -z "$fk" ] && continue
+        local fstatus vendor_hash dest
+        fstatus=$(echo "$STATE_DATA" | jq -r ".files[\"$fk\"].status // \"managed\"")
+        vendor_hash=$(echo "$STATE_DATA" | jq -r ".files[\"$fk\"].source_sha256 // empty")
+
+        # Map manifest key to runtime path
+        dest=$(manifest_key_to_runtime_path "$STATE_PROFILE" "$key" "$fk" 2>/dev/null) || continue
+        [ -z "$dest" ] && continue
+        local full_path="${root}/${dest}"
+
+        if [ "$fstatus" = "managed" ] && [ -f "$full_path" ]; then
+          local curr_hash
+          curr_hash=$(sha256 "$full_path")
+          if [ "$curr_hash" = "$vendor_hash" ] || [ "$vendor_hash" = "null" ]; then
+            rm -f "$full_path"
+            deleted=$((deleted + 1))
+          else
+            kept=$((kept + 1))
+          fi
+        elif [ "$fstatus" = "preserved-modified" ] || [ "$fstatus" = "preserved-retired" ]; then
+          kept=$((kept + 1))
+        elif [ "$fstatus" = "unknown-preserved" ]; then
+          kept=$((kept + 1))
+        elif [ -f "$full_path" ]; then
+          # unclassified owned files — preserve
+          kept=$((kept + 1))
+        fi
+      done <<< "$file_keys"
+
+      echo "  ${deleted} file đã xóa | ${kept} file giữ nguyên"
+
+      # If any files preserved, write tombstone
+      if [ "$kept" -gt 0 ]; then
+        local tombstone
+        tombstone=$(echo "$STATE_DATA" | jq \
+          --arg status "uninstalled-with-preserved-files" \
+          '.status = $status')
+        commit_canonical_state "$key" "$tombstone"
+        echo "  Giữ nguyên ${kept} file đã chỉnh sửa; trạng thái bảo vệ được lưu để cài lại an toàn."
+      else
+        # Fully remove state
+        local dir
+        dir=$(dirname "$(state_file_for_runtime "$key")")
+        rm -f "$(state_file_for_runtime "$key")"
+        rm -f "$(runtime_version_file "$key")"
+        rm -f "$(runtime_product_file "$key")"
+        rm -f "$(runtime_manifest_file "$key")"
+        rm -f "${dir}/PRODUCT_ID" "${dir}/VERSION" "${dir}/PRODUCT" 2>/dev/null || true
       fi
-
-      for skill in "${BA_KIT_SKILLS[@]}"; do
-        rm -rf "$root/skills/$skill" 2>/dev/null || true
-      done
-
-      local agent_rel_paths templates_rel_paths
-      agent_rel_paths=$(_ba_kit_manifest_rel_paths "$(runtime_manifest_file "$key")" agents)
-      templates_rel_paths=$(_ba_kit_manifest_rel_paths "$(runtime_manifest_file "$key")" templates)
-
-      if [ -n "$agent_rel_paths" ]; then
-        while IFS= read -r rel; do
-          [ -n "$rel" ] && rm -f "$root/$rel" 2>/dev/null || true
-        done <<< "$agent_rel_paths"
+    else
+      # Legacy uninstall: backup and remove known paths
+      if [ -d "$root/skills" ]; then
+        for skill in "${BA_KIT_SKILLS[@]}"; do
+          rm -rf "$root/skills/$skill" 2>/dev/null || true
+        done
       fi
-
-      for rule_file in "${BA_KIT_RULES[@]}"; do
-        rm -f "$root/rules/$rule_file" 2>/dev/null || true
-      done
-
-      if [ -n "$templates_rel_paths" ]; then
-        while IFS= read -r rel; do
-          [ -n "$rel" ] && rm -f "$root/$rel" 2>/dev/null || true
-        done <<< "$templates_rel_paths"
-        find "$root/templates" -mindepth 1 -type d -empty -delete 2>/dev/null || true
-      fi
-
       rm -rf "$root/ba-kit" 2>/dev/null || true
       rm -f "$root/core" 2>/dev/null || true
-      rm -f "$root/hooks"/guardrail-*.sh 2>/dev/null || true
-      rm -f "$root/hooks"/postwrite-guardrail.sh 2>/dev/null || true
-      rm -f "$BIN_DIR/ba-kit" 2>/dev/null || true
-    else
-      # Skills-only runtime — never touch anything under $root besides
-      # skills/<name> and ba-kit/ (the rest is the user's own tool config).
-      if [ -d "$root/skills" ]; then
-        mkdir -p "$backup_path"
-        _copy_safe "$root/skills" "$backup_path"
-        echo "Đã backup vào: ${backup_path}"
-      fi
-
-      for skill in "${BA_KIT_SKILLS[@]}"; do
-        rm -rf "$root/skills/$skill" 2>/dev/null || true
-      done
-      rm -rf "$root/ba-kit" 2>/dev/null || true
+      echo "  Đã gỡ (legacy)."
     fi
 
     echo "Đã gỡ ${label}."
     echo ""
   done
 
-  if $has_claude; then
+  if $has_claude && [ -d "$HOME/.claude" ]; then
     clean_hooks_json
   fi
 

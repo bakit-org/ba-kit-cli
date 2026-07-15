@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# ============================================================
+# BA-kit CLI smoke test — gh stub
+# ============================================================
+# Records calls, returns canned responses based on env vars.
+
+GH_CALL_LOG="${GH_CALL_LOG:-/tmp/gh-call-log.txt}"
+: > "$GH_CALL_LOG"
+
+echo "$*" >> "$GH_CALL_LOG"
+
+# auth status
+if echo "$*" | grep -q "auth status"; then
+  if [ "${GH_AUTH_MODE:-logged-in}" = "logged-out" ]; then
+    exit 1
+  fi
+  exit 0
+fi
+
+# repo access probe
+if echo "$*" | grep -q "api repos"; then
+  repo=$(echo "$*" | grep -oE 'repos/[^ ]+' | sed 's|repos/||')
+  case ",${GH_ACCESS_REPOS:-}," in
+    *",$repo,"*) exit 0 ;;
+    *) exit 1 ;;
+  esac
+fi
+
+# release download
+if echo "$*" | grep -q "release download"; then
+  exit 0
+fi
+
+# release latest (api)
+if echo "$*" | grep -q "releases/latest"; then
+  echo '{"tag_name":"v1.0.0","name":"v1.0.0","body":"test","assets":[]}'
+  exit 0
+fi
+
+exit 0
