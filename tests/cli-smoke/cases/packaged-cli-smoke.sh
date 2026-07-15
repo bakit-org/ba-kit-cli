@@ -68,7 +68,7 @@ echo "--- Test 2: dispatcher can locate bash ---"
 if [ ! -f "$EXTRACTED/bin/ba-kit.js" ]; then
   fail "dispatcher not found in extracted package"
 else
-  OUTPUT=$(node -e "require('$EXTRACTED/bin/ba-kit.js')" 2>&1) && RC=0 || RC=$?
+  OUTPUT=$(node -e "require(process.argv[1])" "$EXTRACTED/bin/ba-kit.js" 2>&1) && RC=0 || RC=$?
   if [ "$RC" -eq 0 ]; then
     pass "dispatcher loads without error"
   else
@@ -152,7 +152,7 @@ rm -rf "$SANDBOX"
 # --- Test 7: CLI_VERSION matches package.json ---
 echo "--- Test 7: CLI_VERSION matches package.json ---"
 CLI_VERSION=$(grep '^CLI_VERSION=' "$EXTRACTED/ba-kit" | head -1 | sed 's/CLI_VERSION="\([^"]*\)".*/\1/')
-PKG_VERSION=$(node -e "console.log(require('$EXTRACTED/package.json').version)")
+PKG_VERSION=$(node -e "console.log(require(process.argv[1]).version)" "$EXTRACTED/package.json")
 
 if [ "$CLI_VERSION" = "$PKG_VERSION" ]; then
   pass "CLI_VERSION ($CLI_VERSION) == package.json ($PKG_VERSION)"
