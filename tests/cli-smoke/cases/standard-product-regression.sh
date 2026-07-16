@@ -14,10 +14,36 @@ source "$SMOKE_DIR/lib/sandbox.sh"
 
 CLI="$SMOKE_DIR/../../ba-kit"
 STUB_DIR="$SMOKE_DIR/stubs"
+export PATH="$STUB_DIR:$PATH"
 
 PASS=0; FAIL=0
 pass() { PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $*" >&2; FAIL=$((FAIL + 1)); }
+
+write_standard_state() {
+  local root="$1"
+  local home_dir="${root%/.claude}"
+  local state_dir="$home_dir/.local/share/ba-kit/runtime-state/claude"
+  mkdir -p "$root/ba-kit"
+  mkdir -p "$state_dir"
+  cat > "$state_dir/state.json" << STATE
+{
+  "schema_version": 3,
+  "runtime_key": "claude",
+  "payload_schema": 1,
+  "product_id": "ba-kit",
+  "product_name": "BA-kit",
+  "profile": "standard",
+  "version": "v1.0.0",
+  "status": "installed",
+  "targets": ["$root"],
+  "files": {},
+  "registrations": [],
+  "updated_at": "2026-01-01T00:00:00Z"
+}
+STATE
+  cp "$state_dir/state.json" "$root/ba-kit/state.json"
+}
 
 echo "=== PHASE 05: Standard Product Regression ==="
 echo ""
@@ -36,25 +62,7 @@ echo "--- Test 2: doctor shows standard profile components ---"
 sandbox_setup
 root="$HOME/.claude"
 mkdir -p "$root/ba-kit" "$root/skills" "$root/templates" "$root/agents" "$root/hooks"
-
-# Simulate standard product state
-cat > "$root/ba-kit/state.json" << 'STATE'
-{
-  "version": 2,
-  "product_id": "ba-kit",
-  "product_alias": "BA-kit",
-  "profile": "standard",
-  "selected_version": "v1.0.0",
-  "runtimes": {
-    "claude": {
-      "installed_version": "v1.0.0",
-      "vendor_source_hashes": {}
-    }
-  },
-  "installed_at": "2026-01-01T00:00:00Z",
-  "cli_version": "1.2.9"
-}
-STATE
+write_standard_state "$root"
 
 OUTPUT=$(HOME="$HOME" GH_AUTH_MODE=logged-in bash "$CLI" doctor 2>&1) || true
 # Doctor should not crash on standard state
@@ -89,27 +97,17 @@ echo "--- Test 6: update with standard state ---"
 sandbox_setup
 root="$HOME/.claude"
 mkdir -p "$root/ba-kit" "$root/skills" "$root/templates"
-cat > "$root/ba-kit/state.json" << 'STATE'
-{
-  "version": 2,
-  "product_id": "ba-kit",
-  "product_alias": "BA-kit",
-  "profile": "standard",
-  "selected_version": "v1.0.0",
-  "runtimes": {
-    "claude": {
-      "installed_version": "v1.0.0",
-      "vendor_source_hashes": {}
-    }
-  },
-  "installed_at": "2026-01-01T00:00:00Z",
-  "cli_version": "1.2.9"
-}
-STATE
+write_standard_state "$root"
 
-OUTPUT=$(HOME="$HOME" GH_AUTH_MODE=logged-in bash "$CLI" update 2>&1) || true
-# Should not crash on standard product state
-if [ -n "$OUTPUT" ]; then pass; else fail "update produced no output on standard state"; fi
+OUTPUT=$(HOME="$HOME" GH_AUTH_MODE=logged-in GH_ACCESS_REPOS="bakit-org/bakit" bash "$CLI" update 2>&1) || true
+# Should select the installed product before release lookup.
+if echo "$OUTPUT" | grep -q "unbound variable"; then
+  fail "update crashed before product selection: $OUTPUT"
+elif echo "$OUTPUT" | grep -q "Phiên bản mới nhất"; then
+  pass
+else
+  fail "update did not reach release check: $OUTPUT"
+fi
 sandbox_teardown
 
 # Test 7: uninstall with standard state
@@ -117,23 +115,7 @@ echo "--- Test 7: uninstall auto-detect with standard state ---"
 sandbox_setup
 root="$HOME/.claude"
 mkdir -p "$root/ba-kit" "$root/skills" "$root/templates"
-cat > "$root/ba-kit/state.json" << 'STATE'
-{
-  "version": 2,
-  "product_id": "ba-kit",
-  "product_alias": "BA-kit",
-  "profile": "standard",
-  "selected_version": "v1.0.0",
-  "runtimes": {
-    "claude": {
-      "installed_version": "v1.0.0",
-      "vendor_source_hashes": {}
-    }
-  },
-  "installed_at": "2026-01-01T00:00:00Z",
-  "cli_version": "1.2.9"
-}
-STATE
+write_standard_state "$root"
 
 OUTPUT=$(HOME="$HOME" GH_AUTH_MODE=logged-in bash "$CLI" uninstall 2>&1) || true
 # Should detect standard product and attempt uninstall
@@ -149,23 +131,7 @@ echo "unrelated content" > "$root/skills/unrelated-skill/SKILL.md"
 echo '{"hooks":{}}' > "$root/settings.json"
 
 mkdir -p "$root/ba-kit"
-cat > "$root/ba-kit/state.json" << 'STATE'
-{
-  "version": 2,
-  "product_id": "ba-kit",
-  "product_alias": "BA-kit",
-  "profile": "standard",
-  "selected_version": "v1.0.0",
-  "runtimes": {
-    "claude": {
-      "installed_version": "v1.0.0",
-      "vendor_source_hashes": {}
-    }
-  },
-  "installed_at": "2026-01-01T00:00:00Z",
-  "cli_version": "1.2.9"
-}
-STATE
+write_standard_state "$root"
 
 # Run doctor — must not delete unrelated content
 bash "$CLI" doctor 2>&1 || true

@@ -35,7 +35,7 @@ PRODUCT_URLS=(
 # script also ships standalone via GitHub release tarball with no adjacent
 # package.json (npm global installs, npx, and symlinked ~/.local/bin/ba-kit
 # all resolve differently too).
-CLI_VERSION="1.4.0"
+CLI_VERSION="1.4.1"
 
 RUNTIME_KEYS=("claude" "codex" "agy")
 RUNTIME_LABELS=("Claude Code" "Codex CLI" "Antigravity IDE")
@@ -2151,6 +2151,7 @@ cmd_update() {
       echo "Lỗi: Sản phẩm '$gid' không được hỗ trợ."
       exit 1
     }
+    select_product_index "$idx"
     repo="${PRODUCT_REPOS[$idx]}"
     purl="${PRODUCT_URLS[$idx]}"
     vis="${PRODUCT_VISIBILITIES[$idx]}"
@@ -2193,7 +2194,6 @@ cmd_update() {
     fi
 
     # Set globals and run install path
-    select_product_index "$idx"
     SELECTED_VERSION="$latest"
     SELECTED_RUNTIME_KEYS=("${gkeys[@]}")
     download_release

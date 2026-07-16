@@ -17,15 +17,6 @@ if echo "$*" | grep -q "auth status"; then
   exit 0
 fi
 
-# repo access probe
-if echo "$*" | grep -q "api repos"; then
-  repo=$(echo "$*" | grep -oE 'repos/[^ ]+' | sed 's|repos/||')
-  case ",${GH_ACCESS_REPOS:-}," in
-    *",$repo,"*) exit 0 ;;
-    *) exit 1 ;;
-  esac
-fi
-
 # release download
 if echo "$*" | grep -q "release download"; then
   exit 0
@@ -35,6 +26,15 @@ fi
 if echo "$*" | grep -q "releases/latest"; then
   echo '{"tag_name":"v1.0.0","name":"v1.0.0","body":"test","assets":[]}'
   exit 0
+fi
+
+# repo access probe
+if echo "$*" | grep -q "api repos"; then
+  repo=$(echo "$*" | grep -oE 'repos/[^ ]+' | sed 's|repos/||')
+  case ",${GH_ACCESS_REPOS:-}," in
+    *",$repo,"*) exit 0 ;;
+    *) exit 1 ;;
+  esac
 fi
 
 exit 0
