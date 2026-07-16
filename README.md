@@ -1,107 +1,103 @@
 # BA-kit CLI
 
-AI-powered Business Analyst toolkit for Claude Code, Codex CLI, and Antigravity IDE.
+Supported customer installer for BA-kit on Claude Code, Codex CLI, and Antigravity IDE.
 
 ## Install
 
 ```bash
-npm install -g @bakit-org/cli
+npm install -g @bakit-org/cli@^1.4.0
+ba-kit install
+ba-kit doctor
 ```
 
-Or try without installing:
+CLI 1.4.0 supports BA-kit runtime payload schema 2 and maintains canonical schema-v3 state. Omit `--runtime` to install Claude Code only; select one or more runtimes explicitly when needed:
 
 ```bash
-npx @bakit-org/cli doctor
-```
-
-## Usage
-
-```bash
-ba-kit install                     # First install (default: claude runtime)
-ba-kit install --runtime <list>    # Install for specific runtime(s), e.g. claude,codex,agy
-ba-kit update                      # Update to latest (all installed runtimes)
-ba-kit doctor                      # Health check
-ba-kit version                     # Show CLI version + per-runtime installed version
-ba-kit uninstall                   # Uninstall (with backup, auto-detects installed runtimes)
-ba-kit uninstall --runtime <list>  # Uninstall specific runtime(s) only
+ba-kit install --runtime claude,codex,agy
+ba-kit update
+ba-kit doctor
+ba-kit version
+ba-kit uninstall --runtime codex,agy
 ```
 
 There is no `--product` flag. Product selection is access-driven:
-- **Without GitHub authentication:** public Solo Basic is automatically selected.
-- **With GitHub authentication:** you see a numbered menu of products your account can access (private products plus public Solo).
 
-## Products
+- Without GitHub authentication, public Solo Basic is selected automatically.
+- With GitHub authentication, the CLI shows the products available to the account.
 
-| Product | Access | Profile | Contents |
-|---------|--------|---------|----------|
-| BA-kit Solo Basic | Public (free) | `solo-basic` | 5 skills + templates + core |
-| BA-kit | Private | `standard` | Full skills, agents, hooks, templates |
+## Runtime Scope
+
+| Key | Runtime | Standard profile |
+| --- | --- | --- |
+| `claude` | Claude Code | Native skills, agents, hooks, rules, templates, contract, guardrails |
+| `codex` | Codex CLI | Native generated skills, registered agents/hooks, templates, contract, guardrails |
+| `agy` | Antigravity | Native skills plus managed Knowledge Item and role/handoff profiles; hybrid enforcement |
+
+Antigravity always provisions `~/.gemini/antigravity` as the canonical support root, then also installs into detected `~/.gemini/antigravity-cli` and `~/.gemini/antigravity-ide` homes. Its interactive runtime does not expose a deterministic headless hook surface, so preflight/audit enforcement remains wrapper/operator-driven.
+
+The standard payload includes the four canonical delegated roles: `ba-researcher`, `ba-documentation-agent`, `ux-designer`, and independent read-only `ba-reviewer`. A producer cannot approve its own work. Required review receipts are bound to source hashes, and missing or stale receipts block compilation/package promotion.
 
 ### Solo Basic Scope
 
-Solo Basic installs exactly five skills (`ba-start`, `ba-do`, `ba-next`, `ba-impact`, `brainstorm`)
-plus `templates/` and `core/` to every selected runtime. It does **not** install agents, hooks,
-scripts, settings, framework files, pip packages, or tool lanes.
-
-## Runtimes
-
-| Key | Runtime | Scope |
-|-----|---------|-------|
-| `claude` (default) | Claude Code | Full — skills, agents, hooks, templates |
-| `codex` | Codex CLI | Skills only |
-| `agy` | Antigravity IDE | Skills only |
-
-Omit `--runtime` to install for Claude Code only (unchanged, backward-compatible
-default). Pass a comma-separated list to install for multiple runtimes in one
-command, e.g. `ba-kit install --runtime claude,codex,agy`.
+Solo Basic installs exactly five skills (`ba-start`, `ba-do`, `ba-next`, `ba-impact`, `brainstorm`) plus templates and core contract content. It does not install standard-profile agents, hooks, scripts, settings, framework files, pip packages, or tool lanes.
 
 ## Prerequisites
 
-- **Public Solo Basic:** `jq` and `curl` (pre-installed on macOS; `apt install jq` on Ubuntu).
-- **Private products:** [GitHub CLI](https://cli.github.com) (`gh`) authenticated with `gh auth login`.
-- Node.js 18+ (for `npm install -g`).
-- Windows only: [Git for Windows](https://git-scm.com/download/win) (provides `bash.exe`, required by the CLI).
+- Node.js 18+.
+- Public Solo Basic: `jq` and `curl`.
+- Private products: GitHub CLI (`gh`) authenticated with `gh auth login`.
+- Windows: Git for Windows, which provides `bash.exe`.
 
-## State And Recovery
+## State, Transactions, And Recovery
 
-The CLI uses schema-v2 `state.json` files (`~/.claude/ba-kit/state.json` etc.) to track
-installed products, versions, and managed file hashes. This enables safe update, uninstall,
-and reinstall without data loss.
+Canonical state is stored at:
 
-### Recovery
+```text
+~/.local/share/ba-kit/runtime-state/{runtime}/state.json
+```
 
-- **Schema-v2 downgrade is unsupported.** If you installed with a newer CLI version, upgrade
-  the npm package first before uninstalling or updating.
-- **Tombstone after uninstall:** uninstalling leaves a minimal state record (tombstone) so a
-  same-product reinstall recognises preserved files instead of treating them as conflicts.
-- **Doctor** (`ba-kit doctor`) is read-only — use it to diagnose state issues.
-- **Partial/corrupt state** blocks fresh installs, updates, and uninstalls to prevent data loss.
-- For recovery: upgrade the npm CLI to the latest version and run `ba-kit doctor` for guidance.
+Schema-v3 state records the payload schema, product/profile/version, runtime targets, registrations, managed hashes, and preserved-file status. Legacy and schema-v2 installs migrate forward during install/update.
 
-### Trust Boundary
+Install, update, and uninstall are transactional across selected runtimes. Journals live under `~/.local/share/ba-kit/transactions/`; an interrupted transaction is recovered before a later mutation. Malformed journals or state fail closed. `ba-kit doctor` is read-only and reports the recovery issue.
 
-Release archives are downloaded over HTTPS from GitHub Releases. Checksums verify download
-integrity under GitHub TLS and release-authority trust — they are not an independent
-cryptographic signature or publisher provenance. Always install from the official
-`@bakit-org/cli` npm package and the `bakit-org` GitHub organisation.
+Files are removed or replaced only while their hashes still match BA-kit-managed content. User-modified and retired files are preserved as `preserved-modified`. Uninstall may leave an `uninstalled-with-preserved-files` tombstone so a later reinstall does not misclassify those files.
+
+Runtime assets and metadata files are checked against approved runtime roots after realpath resolution. Symlinked parents/files that escape those roots fail closed before mutation.
+
+`RECOVERY_REQUIRED.json` prevents an older CLI from mutating a schema-v3 installation. Do not delete the barrier. Upgrade the npm CLI and run:
+
+```bash
+ba-kit doctor
+ba-kit update
+ba-kit doctor
+```
+
+Doctor checks schema-v3 state, managed path containment and hashes, transaction health, native Reviewer/orchestration capabilities, and Claude/Codex registrations. Repair uses `ba-kit update` after any malformed external configuration is corrected.
+
+## Trust Boundary
+
+The CLI validates the release manifest, runtime component contract, and extracted file hashes before mutation. GitHub release checksums protect download integrity under GitHub TLS and release-authority trust; they are not an independent publisher signature. Install only the official `@bakit-org/cli` package and releases from the `bakit-org` GitHub organization.
+
+## Release Compatibility
+
+BA-kit archives with `runtime_payload_schema: 2` require CLI 1.4.0 or newer. Release order is CLI first, then the BA-kit archive. npm publishing, Git tags, GitHub Releases, and rollout require explicit maintainer authorization.
+
+Never downgrade schema-v3 state in place. If a release must be rolled back, use transaction recovery or a forward CLI/BA-kit patch and keep project artifacts plus review receipts unchanged.
 
 ## Quick Start
 
-### Public Solo Basic (free)
+### Public Solo Basic
 
 ```bash
-npm install -g @bakit-org/cli
-ba-kit install                    # auto-selects Solo Basic
+npm install -g @bakit-org/cli@^1.4.0
+ba-kit install
+ba-kit doctor
 ```
-
-Start using `/ba-start` in Claude Code.
 
 ### Private Products
 
-1. Buy BA-kit on [Polar.sh](https://polar.sh/checkout/polar_c_Bd8xfL8VTBQtYpol2MdbS2M5acEFMsjKmDFec0bYVGF)
-2. Accept GitHub invite (check email)
-3. Install GitHub CLI: `brew install gh`
-4. Login: `gh auth login`
-5. Install CLI: `npm install -g @bakit-org/cli`
-6. Install BA-kit content: `ba-kit install`
-7. Start using: `/ba-start` in Claude Code
+1. Accept the product's GitHub organization invitation.
+2. Install and authenticate GitHub CLI with `gh auth login`.
+3. Install `@bakit-org/cli` 1.4.0 or newer.
+4. Run `ba-kit install --runtime <runtime-list>`.
+5. Run `ba-kit doctor` before starting `/ba-start` or `/ba-do`.
