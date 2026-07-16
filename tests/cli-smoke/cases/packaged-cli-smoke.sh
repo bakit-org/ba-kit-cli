@@ -46,7 +46,10 @@ EXTRACTED="$WORK_DIR/package"
 echo "--- Test 1: package contains required files ---"
 PACKED_FILES=$(tar -tzf "$TARBALL_PATH" 2>/dev/null | sed 's|^package/||' | grep -v '^$' | grep -v '^package$' | sort)
 
-for required in "ba-kit" "bin/ba-kit.js" "lib/archive-helper.js" "README.md" "package.json"; do
+for required in \
+  "ba-kit" "bin/ba-kit.js" "lib/archive-helper.js" \
+  "lib/runtime-component-contract.js" "lib/runtime-lifecycle.js" \
+  "lib/runtime-registration.js" "README.md" "package.json"; do
   if echo "$PACKED_FILES" | grep -qF "$required"; then
     pass "package contains: $required"
   else
