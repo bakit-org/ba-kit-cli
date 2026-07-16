@@ -35,12 +35,12 @@ PRODUCT_URLS=(
 # script also ships standalone via GitHub release tarball with no adjacent
 # package.json (npm global installs, npx, and symlinked ~/.local/bin/ba-kit
 # all resolve differently too).
-CLI_VERSION="1.3.0"
+CLI_VERSION="1.4.0"
 
 RUNTIME_KEYS=("claude" "codex" "agy")
 RUNTIME_LABELS=("Claude Code" "Codex CLI" "Antigravity IDE")
-RUNTIME_ROOTS=("$HOME/.claude" "$HOME/.codex" "$HOME/.gemini/config")
-RUNTIME_SCOPES=("full" "skills" "skills")
+RUNTIME_ROOTS=("$HOME/.claude" "$HOME/.codex" "$HOME/.gemini/antigravity")
+RUNTIME_SCOPES=("full" "native" "native")
 
 runtime_index_for_key() {   # $1=key -> echoes index or returns 1
   local key="$1"
@@ -53,7 +53,22 @@ runtime_index_for_key() {   # $1=key -> echoes index or returns 1
   return 1
 }
 
-runtime_root_for_key()  { local i; i=$(runtime_index_for_key "$1") && echo "${RUNTIME_ROOTS[$i]}"; }
+runtime_root_for_key()  {
+  if [ "$1" = "agy" ]; then
+    for candidate in "$HOME/.gemini/antigravity" "$HOME/.gemini/antigravity-cli" "$HOME/.gemini/antigravity-ide"; do
+      [ -d "$candidate" ] && { echo "$candidate"; return; }
+    done
+  fi
+  local i; i=$(runtime_index_for_key "$1") && echo "${RUNTIME_ROOTS[$i]}"
+}
+runtime_roots_for_key() {
+  if [ "$1" != "agy" ]; then runtime_root_for_key "$1"; return; fi
+  local found=false candidate
+  for candidate in "$HOME/.gemini/antigravity" "$HOME/.gemini/antigravity-cli" "$HOME/.gemini/antigravity-ide"; do
+    if [ -d "$candidate" ]; then echo "$candidate"; found=true; fi
+  done
+  $found || echo "$HOME/.gemini/antigravity"
+}
 runtime_label_for_key() { local i; i=$(runtime_index_for_key "$1") && echo "${RUNTIME_LABELS[$i]}"; }
 runtime_scope_for_key() { local i; i=$(runtime_index_for_key "$1") && echo "${RUNTIME_SCOPES[$i]}"; }
 
@@ -719,7 +734,7 @@ check_cross_product_for_runtime() {
   if [ -f "$version_file" ]; then
     local current
     current=$(cat "$version_file")
-    if [ "$current" = "$SELECTED_VERSION" ]; then
+    if [ "${current#v}" = "${SELECTED_VERSION#v}" ]; then
       if [ ${#SELECTED_RUNTIME_KEYS[@]} -gt 1 ]; then
         echo "${label}: ${SELECTED_PRODUCT} ${SELECTED_VERSION} đã được cài đặt, bỏ qua."
         return 1
@@ -946,6 +961,7 @@ if [ ! -f "$ARCHIVE_HELPER" ]; then
   # Try relative to the bin/ba-kit.js dispatcher
   ARCHIVE_HELPER="$(cd "$(dirname "$0")/.." && pwd)/lib/archive-helper.js"
 fi
+RUNTIME_LIFECYCLE_HELPER="$(dirname "$ARCHIVE_HELPER")/runtime-lifecycle.js"
 
 inspect_archive() {
   echo "Đang kiểm tra archive..."
@@ -954,6 +970,7 @@ inspect_archive() {
     --archive "$ARCHIVE_FILE" \
     --profile "$SELECTED_PROFILE" \
     --cli-version "$CLI_VERSION" \
+    --runtimes "$(IFS=,; echo "${SELECTED_RUNTIME_KEYS[*]:-claude}")" \
     --selected-product "$SELECTED_PRODUCT_ID" \
     --selected-version "$SELECTED_VERSION" 2>&1) || {
     echo "Lỗi: Archive validation failed."
@@ -1439,8 +1456,18 @@ profile_components() {
       echo ".claude|.|./.claude/"
       echo "ba-kit|ba-kit|./ba-kit/"
       ;;
-    standard:codex|standard:agy)
-      echo ".claude/skills|skills|./.claude/skills/"
+    standard:codex)
+      echo ".codex/skills|skills|./.codex/skills/"
+      echo ".codex/agents|agents|./.codex/agents/"
+      echo ".codex/templates|templates|./.codex/templates/"
+      echo ".codex/ba-kit|ba-kit|./.codex/ba-kit/"
+      ;;
+    standard:agy)
+      echo ".antigravity/skills|skills|./.antigravity/skills/"
+      echo ".antigravity/templates|ba-kit/templates|./.antigravity/templates/"
+      echo ".antigravity/core|ba-kit/core|./.antigravity/core/"
+      echo ".antigravity/guardrails|ba-kit/scripts|./.antigravity/guardrails/"
+      echo ".antigravity/knowledge/ba-kit-workflow|knowledge/ba-kit-workflow|./.antigravity/knowledge/ba-kit-workflow/"
       ;;
     solo-basic:*)
       echo ".claude/skills|skills|./.claude/skills/"
@@ -1513,8 +1540,8 @@ validate_solo_release_payload() {
   fi
 }
 
-# === Schema-v2 State File Management ===
-state_file_for_runtime()  { echo "$(runtime_root_for_key "$1")/ba-kit/state.json"; }
+# === Canonical schema-v3 state location ===
+state_file_for_runtime()  { echo "$HOME/.local/share/ba-kit/runtime-state/$1/state.json"; }
 
 write_state_v2() {
   local key="$1" state_json="$2"
@@ -1529,26 +1556,21 @@ write_state_v2() {
 install_preflight() {
   local key
   for key in "$@"; do
-    local root
-    root=$(runtime_root_for_key "$key")
-
-    # Check no existing install of different product
-    local pfile
-    pfile=$(runtime_product_file "$key")
-    if [ -f "$pfile" ]; then
-      local existing
-      existing=$(cat "$pfile")
-      if [ "$existing" != "$SELECTED_PRODUCT" ]; then
-        echo "Lỗi: ${SELECTED_PRODUCT} không thể cài đè lên ${existing}."
-        echo "Gỡ ${existing} trước: ba-kit uninstall --runtime ${key}"
-        exit 1
+    local root pfile existing
+    while IFS= read -r root; do
+      pfile="${root}/ba-kit/PRODUCT"
+      if [ -f "$pfile" ]; then
+        existing=$(cat "$pfile")
+        if [ "$existing" != "$SELECTED_PRODUCT" ]; then
+          echo "Lỗi: ${SELECTED_PRODUCT} không thể cài đè lên ${existing}."
+          echo "Gỡ ${existing} trước: ba-kit uninstall --runtime ${key}"
+          exit 1
+        fi
       fi
-    fi
+    done < <(runtime_roots_for_key "$key")
 
-    if [ -f "$(runtime_recovery_marker_for_key "$key")" ]; then
-      echo "Lỗi: ${key} cần khôi phục trước khi tiếp tục. Chạy ba-kit doctor." >&2
-      exit 1
-    fi
+    # Schema-v3 compatibility barriers are validated by the lifecycle helper
+    # for every detected target. Do not reject a valid v3 install here.
   done
 
   if [ "$SELECTED_PROFILE" = "solo-basic" ]; then
@@ -1653,19 +1675,15 @@ transaction_failed() {
 }
 
 apply_runtime_transaction() {
-  local key
-  TRANSACTION_KEYS=("$@")
-  TRANSACTION_DIR=$(mktemp -d "${TMP_DIR}/ba-kit-transaction.XXXXXX")
-  for key in "${TRANSACTION_KEYS[@]}"; do
-    snapshot_transaction_runtime "$TRANSACTION_DIR" "$key"
-  done
-
-  trap 'transaction_failed "$?"' ERR INT TERM
-  for key in "${TRANSACTION_KEYS[@]}"; do
-    install_runtime_payload "$key"
-  done
-  trap - ERR INT TERM
-  rm -rf "$TRANSACTION_DIR"
+  local runtime_list
+  runtime_list=$(IFS=,; echo "$*")
+  node "$RUNTIME_LIFECYCLE_HELPER" install \
+    --extract "$EXTRACT_DIR" \
+    --runtimes "$runtime_list" \
+    --profile "$SELECTED_PROFILE" \
+    --product_id "$SELECTED_PRODUCT_ID" \
+    --product_name "$SELECTED_PRODUCT" \
+    --version "${SELECTED_VERSION#v}"
 }
 
 # === INSTALL-SPECIFIC: Apply payload for one runtime ===
@@ -1774,15 +1792,9 @@ install_runtime_payload() {
 }
 
 post_install_runtimes() {
-  local key root
-  for key in "$@"; do
-    root=$(runtime_root_for_key "$key")
-    if [ "$SELECTED_PROFILE" = "standard" ] && [ "$key" = "claude" ]; then
-      post_install_standard_claude "$root"
-    elif [ "$SELECTED_PROFILE" = "solo-basic" ]; then
-      post_install_solo "$root"
-    fi
-  done
+  # Runtime registration and compatibility projections are committed by the
+  # durable Node lifecycle helper inside the transaction boundary.
+  return 0
 }
 
 # Standard Claude post-install (hooks, pip, framework binary, core symlink)
@@ -1897,11 +1909,13 @@ cmd_install() {
     echo "-- ${label} (${root}) --"
 
     # Backup existing state before mutation
-    local backup_dir
-    backup_dir=$(runtime_backup_dir "$key")
-    if [ -d "$root" ] && [ "$(ls -A "$root" 2>/dev/null)" ]; then
-      do_backup "$root" "$backup_dir"
-    fi
+    local backup_dir target_root
+    while IFS= read -r target_root; do
+      backup_dir="${target_root}/ba-kit/backups"
+      if [ -d "$target_root" ] && [ "$(ls -A "$target_root" 2>/dev/null)" ]; then
+        do_backup "$target_root" "$backup_dir"
+      fi
+    done < <(runtime_roots_for_key "$key")
 
   done
 
@@ -1913,7 +1927,7 @@ cmd_install() {
 }
 
 # ============================================================
-# STATE RESOLVER — schema-v2 first, legacy fallback
+# STATE RESOLVER — schema-v3 first, schema-v2/legacy fallback
 # ============================================================
 # Product aliases: current name + historical aliases
 product_alias_of() {
@@ -1936,7 +1950,7 @@ product_id_for_name() {
   esac
 }
 
-# Resolve runtime state — canonical schema-v2 first, then legacy
+# Resolve runtime state — canonical schema-v3 first, then schema-v2/legacy
 # Sets: STATE_SOURCE, STATE_DATA, STATE_PROFILE, STATE_PRODUCT_ID, STATE_VERSION
 resolve_runtime_state() {
   local key="$1"
@@ -1946,19 +1960,8 @@ resolve_runtime_state() {
   local state_file
   state_file=$(state_file_for_runtime "$key")
 
-  local recovery_marker
-  recovery_marker=$(runtime_recovery_marker_for_key "$key")
-  if [ -f "$recovery_marker" ]; then
-    STATE_SOURCE="recovery"
-    STATE_DATA=$(cat "$recovery_marker")
-    if [ "$mode" = "mutating" ]; then
-      echo "Lỗi: trạng thái cần khôi phục tại $(runtime_label_for_key "$key"). Chạy ba-kit doctor để xem hướng dẫn." >&2
-      return 1
-    fi
-    return 0
-  fi
-
-  # Schema-v2 state.json
+  # Canonical schema-v3 state is authoritative and makes the old-CLI barrier
+  # safe to ignore for this CLI version.
   if [ -f "$state_file" ]; then
     local st
     st=$(jq -r '.status // "installed"' "$state_file" 2>/dev/null)
@@ -1967,11 +1970,41 @@ resolve_runtime_state() {
       STATE_SOURCE="recovery"
       return 1
     fi
-    STATE_SOURCE="v2"
+    local schema
+    schema=$(jq -r '.schema_version // 0' "$state_file" 2>/dev/null)
+    if [ "$schema" = "3" ] && ! jq -e --arg runtime "$key" '
+      .schema_version == 3 and .runtime_key == $runtime and
+      (.payload_schema | type == "number") and
+      (.product_id | type == "string") and (.product_id | length > 0) and
+      (.product_name | type == "string") and (.profile | type == "string") and
+      (.version | type == "string") and (.status | type == "string") and
+      (.targets | type == "array") and (.targets | length > 0) and
+      (.files | type == "object")
+    ' "$state_file" >/dev/null 2>&1; then
+      STATE_SOURCE="partial"
+      echo "Lỗi: schema-v3 không hợp lệ tại $(runtime_label_for_key "$key"). Chạy ba-kit doctor." >&2
+      [ "$mode" = "mutating" ] && return 1
+      return 0
+    fi
+    STATE_SOURCE="$([ "$schema" = "3" ] && echo v3 || echo v2)"
     STATE_DATA=$(cat "$state_file")
     STATE_PRODUCT_ID=$(echo "$STATE_DATA" | jq -r '.product_id // ""')
     STATE_PROFILE=$(echo "$STATE_DATA" | jq -r '.profile // ""')
     STATE_VERSION=$(echo "$STATE_DATA" | jq -r '.version // ""')
+    return 0
+  fi
+
+  local recovery_marker
+  recovery_marker=$(runtime_recovery_marker_for_key "$key")
+  if [ -f "$recovery_marker" ]; then
+    STATE_SOURCE="recovery"
+    STATE_DATA=$(cat "$recovery_marker")
+    if [ "$(jq -r '.status // ""' "$recovery_marker" 2>/dev/null)" = "cli-upgrade-required" ]; then
+      echo "Lỗi: ${key} cần CLI >= 1.4.0 để tiếp tục." >&2
+    elif [ "$mode" = "mutating" ]; then
+      echo "Lỗi: trạng thái cần khôi phục tại $(runtime_label_for_key "$key"). Chạy ba-kit doctor để xem hướng dẫn." >&2
+      return 1
+    fi
     return 0
   fi
 
@@ -2142,11 +2175,11 @@ cmd_update() {
     local all_latest=true
     for key in "${gkeys[@]}"; do
       resolve_runtime_state "$key" "read-only" || true
-      if [ "${STATE_VERSION:-}" != "$latest" ]; then
+      if [ "${STATE_VERSION#v}" != "${latest#v}" ]; then
         all_latest=false; break
       fi
     done
-    if $all_latest; then
+    if $all_latest && node "$RUNTIME_LIFECYCLE_HELPER" doctor --home "$HOME" --runtimes "$(IFS=,; echo "${gkeys[*]}")" >/dev/null 2>&1; then
       echo "Đang dùng phiên bản mới nhất."
       echo ""
       continue
@@ -2162,6 +2195,7 @@ cmd_update() {
     # Set globals and run install path
     select_product_index "$idx"
     SELECTED_VERSION="$latest"
+    SELECTED_RUNTIME_KEYS=("${gkeys[@]}")
     download_release
     extract_release
     install_preflight "${gkeys[@]}"
@@ -2173,9 +2207,11 @@ cmd_update() {
       label=$(runtime_label_for_key "$key")
       echo ""
       echo "-- ${label} (${root}) --"
-      local backup_dir
-      backup_dir=$(runtime_backup_dir "$key")
-      [ -d "$root" ] && [ "$(ls -A "$root" 2>/dev/null)" ] && do_backup "$root" "$backup_dir"
+      local backup_dir target_root
+      while IFS= read -r target_root; do
+        backup_dir="${target_root}/ba-kit/backups"
+        [ -d "$target_root" ] && [ "$(ls -A "$target_root" 2>/dev/null)" ] && do_backup "$target_root" "$backup_dir"
+      done < <(runtime_roots_for_key "$key")
     done
     apply_runtime_transaction "${gkeys[@]}"
     post_install_runtimes "${gkeys[@]}"
@@ -2194,6 +2230,11 @@ cmd_update() {
 # ============================================================
 cmd_doctor() {
   echo ""
+
+  local runtime_doctor_status=0
+  if [ -f "$RUNTIME_LIFECYCLE_HELPER" ]; then
+    node "$RUNTIME_LIFECYCLE_HELPER" doctor --home "$HOME" --runtimes "claude,codex,agy" || runtime_doctor_status=$?
+  fi
   echo "=============================================="
   echo "  BA-kit HEALTH CHECK"
   echo "=============================================="
@@ -2206,12 +2247,12 @@ cmd_doctor() {
     resolve_runtime_state "$key" "read-only" || true
 
     case "${STATE_SOURCE:-empty}" in
-      v2)
+      v3|v2)
         local st
         st=$(echo "$STATE_DATA" | jq -r '.status')
         local alias
         alias=$(product_alias_of "$STATE_PRODUCT_ID")
-        echo "[OK]   ${label}: ${alias} ${STATE_VERSION} (schema-v2, ${st})"
+        echo "[OK]   ${label}: ${alias} ${STATE_VERSION} (schema-${STATE_SOURCE#v}, ${st})"
         any_installed=true
         ;;
       legacy)
@@ -2277,7 +2318,7 @@ cmd_doctor() {
     label=$(runtime_label_for_key "$key")
 
     echo "  ${label}:"
-    if [ "$STATE_SOURCE" = "v2" ]; then
+    if [ "$STATE_SOURCE" = "v3" ] || [ "$STATE_SOURCE" = "v2" ]; then
       local scount tcount
       scount=$(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ')
       tcount=$(ls -1 "$root/templates/" 2>/dev/null | wc -l | tr -d ' ')
@@ -2301,6 +2342,7 @@ cmd_doctor() {
   done
 
   echo ""
+  return "$runtime_doctor_status"
 }
 
 # ============================================================
@@ -2313,7 +2355,7 @@ cmd_version() {
     label=$(runtime_label_for_key "$key")
     resolve_runtime_state "$key" "read-only" || true
     case "${STATE_SOURCE:-empty}" in
-      v2)
+      v3|v2)
         local alias
         alias=$(product_alias_of "$STATE_PRODUCT_ID")
         echo "  ${label}: ${alias} v${STATE_VERSION}"
@@ -2393,6 +2435,12 @@ cmd_uninstall() {
 
   echo ""
 
+  if [ -f "$RUNTIME_LIFECYCLE_HELPER" ]; then
+    node "$RUNTIME_LIFECYCLE_HELPER" uninstall --home "$HOME" --runtimes "$(IFS=,; echo "${TARGET_RUNTIME_KEYS[*]}")"
+    echo "Đã gỡ các runtime được chọn bằng transaction schema-v3."
+    exit 0
+  fi
+
   local has_claude=false
   for key in "${TARGET_RUNTIME_KEYS[@]}"; do
     [ "$key" = "claude" ] && has_claude=true
@@ -2411,7 +2459,7 @@ cmd_uninstall() {
 
     # Backup state + owned files
     mkdir -p "$backup_path"
-    if [ "${STATE_SOURCE:-}" = "v2" ]; then
+      if [ "${STATE_SOURCE:-}" = "v3" ] || [ "${STATE_SOURCE:-}" = "v2" ]; then
       local state_file mf
       state_file=$(state_file_for_runtime "$key")
       [ -f "$state_file" ] && cp "$state_file" "$backup_path/state.json"
