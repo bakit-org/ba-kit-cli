@@ -93,10 +93,25 @@ done
 [ -f "$HOME_DIR/.gemini/antigravity/knowledge/ba-kit-workflow/metadata.json" ] || die "Antigravity Knowledge Item missing"
 DOCTOR_OUTPUT=$(node "$LIFECYCLE" doctor --home "$HOME_DIR" --runtimes claude,codex,agy 2>&1) || die "doctor failed after fresh install: $DOCTOR_OUTPUT"
 [ "$(printf '%s' "$DOCTOR_OUTPUT" | grep -c '\[OK\]')" -eq 3 ] || die "doctor did not validate all runtimes"
+cat >> "$HOME_DIR/.codex/config.toml" <<'EOF'
+# >>> ba-kit managed agents >>>
+[agents.ba-reviewer]
+description = "legacy BA-kit registration"
+config_file = "agents/ba-reviewer.toml"
+# <<< ba-kit managed agents <<<
+
+# BEGIN BA-kit managed agents
+[agents.ux-designer]
+description = "development BA-kit registration"
+config_file = "agents/ux-designer.toml"
+# END BA-kit managed agents
+EOF
 install_native claude,codex,agy
 [ "$(jq '[.hooks.PreToolUse[] | select(.hooks[0].ba_kit_managed == true)] | length' "$HOME_DIR/.claude/settings.json")" = 1 ] || die "Claude registration duplicated"
 [ "$(jq '[.hooks.PreToolUse[].hooks[] | select(.command == "echo mixed-user-hook")] | length' "$HOME_DIR/.claude/settings.json")" = 1 ] || die "Claude reinstall removed mixed user hook"
 [ "$(grep -c '^# >>> BA-kit managed agents >>>$' "$HOME_DIR/.codex/config.toml")" = 1 ] || die "Codex registration duplicated"
+! grep -qi '^# BEGIN BA-kit managed agents$' "$HOME_DIR/.codex/config.toml" || die "Codex development registration block survived reinstall"
+! grep -q '^# >>> ba-kit managed agents >>>$' "$HOME_DIR/.codex/config.toml" || die "Codex lowercase legacy block survived reinstall"
 [ "$(jq -r '.theme' "$HOME_DIR/.claude/settings.json")" = dark ] || die "Claude user config lost"
 [ "$(jq -r '.owner' "$HOME_DIR/.codex/hooks.json")" = user ] || die "Codex user config lost"
 pass "fresh/reinstall claude+codex+agy"

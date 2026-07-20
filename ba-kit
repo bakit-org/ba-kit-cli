@@ -35,7 +35,7 @@ PRODUCT_URLS=(
 # script also ships standalone via GitHub release tarball with no adjacent
 # package.json (npm global installs, npx, and symlinked ~/.local/bin/ba-kit
 # all resolve differently too).
-CLI_VERSION="1.4.1"
+CLI_VERSION="1.4.2"
 
 RUNTIME_KEYS=("claude" "codex" "agy")
 RUNTIME_LABELS=("Claude Code" "Codex CLI" "Antigravity IDE")
