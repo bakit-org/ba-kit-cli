@@ -272,6 +272,12 @@ jq '(.hooks.PreToolUse[0].hooks) += [{"type":"command","command":"echo mixed-use
   "$HOME_DIR/.claude/settings.json" > "$HOME_DIR/.claude/settings.json.tmp"
 mv "$HOME_DIR/.claude/settings.json.tmp" "$HOME_DIR/.claude/settings.json"
 printf 'user modified managed skill\n' > "$HOME_DIR/.claude/skills/ba-review/SKILL.md"
+printf 'user modified managed Codex skill\n' > "$HOME_DIR/.codex/skills/ba-review/SKILL.md"
+jq --arg root "$HOME_DIR/.codex" '(.hooks.PreToolUse) += [
+  {"matcher":"Read|Glob","hooks":[{"type":"command","command":("bash \"" + $root + "/ba-kit/hooks/guardrail-context-preflight-guard-hook.sh\"")}]},
+  {"matcher":"Read","hooks":[{"type":"command","command":"echo nested-user-hook"}]}
+]' "$HOME_DIR/.codex/hooks.json" > "$HOME_DIR/.codex/hooks.json.tmp"
+mv "$HOME_DIR/.codex/hooks.json.tmp" "$HOME_DIR/.codex/hooks.json"
 node "$LIFECYCLE" uninstall --home "$HOME_DIR" --runtimes claude,codex
 [ "$(jq -r '.theme' "$HOME_DIR/.claude/settings.json")" = dark ] || die "uninstall removed Claude user config"
 [ "$(jq '.hooks.UserPromptSubmit | length' "$HOME_DIR/.claude/settings.json")" = 1 ] || die "uninstall removed Claude user hook"
@@ -280,9 +286,24 @@ node "$LIFECYCLE" uninstall --home "$HOME_DIR" --runtimes claude,codex
 grep -q 'user-model' "$HOME_DIR/.codex/config.toml" || die "uninstall removed Codex user config"
 ! grep -q 'BA-kit managed agents' "$HOME_DIR/.codex/config.toml" || die "uninstall retained Codex managed block"
 [ "$(jq -r '.owner' "$HOME_DIR/.codex/hooks.json")" = user ] || die "uninstall removed Codex hook config"
+! grep -q '/ba-kit/hooks/' "$HOME_DIR/.codex/hooks.json" || die "uninstall retained nested/direct Codex BA-kit hooks"
+grep -q 'nested-user-hook' "$HOME_DIR/.codex/hooks.json" || die "uninstall removed nested Codex user hook"
 grep -q 'user modified' "$HOME_DIR/.claude/skills/ba-review/SKILL.md" || die "uninstall removed modified managed file"
-[ ! -e "$HOME_DIR/.codex/skills/ba-review/SKILL.md" ] || die "uninstall retained unchanged managed file"
+[ ! -e "$HOME_DIR/.codex/templates/frd.md" ] || die "uninstall retained unchanged managed file"
+[ "$(grep -c 'user modified managed Codex skill' "$HOME_DIR/.codex/skills/ba-review/SKILL.md")" = 1 ] || die "uninstall removed modified Codex skill"
 [ "$(jq -r '.status' "$(state_file claude)")" = uninstalled-with-preserved-files ] || die "uninstall tombstone missing"
+[ "$(jq -r '.status' "$(state_file codex)")" = uninstalled-with-preserved-files ] || die "Codex uninstall tombstone missing"
+VERSION_OUTPUT=$(HOME="$HOME_DIR" bash "$CLI_REPO/ba-kit" version)
+printf '%s' "$VERSION_OUTPUT" | grep -q 'đã gỡ' || die "version reports uninstall tombstone as installed"
+UNINSTALL_OUTPUT=$(HOME="$HOME_DIR" bash "$CLI_REPO/ba-kit" uninstall)
+printf '%s' "$UNINSTALL_OUTPUT" | grep -q 'Không có runtime' || die "unscoped uninstall reselected tombstones"
+set +e
+UPDATE_OUTPUT=$(HOME="$HOME_DIR" bash "$CLI_REPO/ba-kit" update 2>&1)
+UPDATE_RC=$?
+set -e
+[ "$UPDATE_RC" -ne 0 ] && printf '%s' "$UPDATE_OUTPUT" | grep -q 'chưa được cài' || die "update reselected uninstall tombstones"
+DOCTOR_OUTPUT=$(node "$LIFECYCLE" doctor --home "$HOME_DIR" --runtimes claude,codex 2>&1) || die "doctor failed on uninstall tombstones: $DOCTOR_OUTPUT"
+[ "$(printf '%s' "$DOCTOR_OUTPUT" | grep -c '\[UNINSTALLED\]')" -eq 2 ] || die "doctor did not classify uninstall tombstones"
 pass "uninstall registration cleanup and config preservation"
 
 echo "=== Native Runtime Lifecycle Results: $PASS passed ==="

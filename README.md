@@ -60,7 +60,7 @@ Schema-v3 state records the payload schema, product/profile/version, runtime tar
 
 Install, update, and uninstall are transactional across selected runtimes. Journals live under `~/.local/share/ba-kit/transactions/`; an interrupted transaction is recovered before a later mutation. Malformed journals or state fail closed. `ba-kit doctor` is read-only and reports the recovery issue.
 
-Files are removed or replaced only while their hashes still match BA-kit-managed content. User-modified and retired files are preserved as `preserved-modified`. Uninstall may leave an `uninstalled-with-preserved-files` tombstone so a later reinstall does not misclassify those files.
+Files are removed or replaced only while their hashes still match BA-kit-managed content. User-modified and retired files are preserved as `preserved-modified`. Uninstall may leave an `uninstalled-with-preserved-files` tombstone so a later reinstall does not misclassify those files; `ba-kit version` and `doctor` report that state as uninstalled, not active. Codex hook cleanup handles both direct and nested hook entries while preserving user-owned hooks.
 
 Runtime assets and metadata files are checked against approved runtime roots after realpath resolution. Symlinked parents/files that escape those roots fail closed before mutation.
 

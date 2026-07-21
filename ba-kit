@@ -35,7 +35,7 @@ PRODUCT_URLS=(
 # script also ships standalone via GitHub release tarball with no adjacent
 # package.json (npm global installs, npx, and symlinked ~/.local/bin/ba-kit
 # all resolve differently too).
-CLI_VERSION="1.4.3"
+CLI_VERSION="1.4.4"
 
 RUNTIME_KEYS=("claude" "codex" "agy")
 RUNTIME_LABELS=("Claude Code" "Codex CLI" "Antigravity IDE")
@@ -1956,7 +1956,7 @@ resolve_runtime_state() {
   local key="$1"
   local mode="${2:-mutating}"  # mutating | read-only
 
-  STATE_SOURCE=""; STATE_DATA="{}"; STATE_PROFILE=""; STATE_PRODUCT_ID=""; STATE_VERSION=""
+  STATE_SOURCE=""; STATE_DATA="{}"; STATE_PROFILE=""; STATE_PRODUCT_ID=""; STATE_VERSION=""; STATE_STATUS=""
   local state_file
   state_file=$(state_file_for_runtime "$key")
 
@@ -1991,6 +1991,7 @@ resolve_runtime_state() {
     STATE_PRODUCT_ID=$(echo "$STATE_DATA" | jq -r '.product_id // ""')
     STATE_PROFILE=$(echo "$STATE_DATA" | jq -r '.profile // ""')
     STATE_VERSION=$(echo "$STATE_DATA" | jq -r '.version // ""')
+    STATE_STATUS=$(echo "$STATE_DATA" | jq -r '.status // "installed"')
     return 0
   fi
 
@@ -2049,6 +2050,7 @@ resolve_runtime_state() {
     STATE_PRODUCT_ID="$pid"
     STATE_PROFILE=$(product_index_for_id "$pid" >/dev/null 2>&1 && echo "${PRODUCT_PROFILES[$(product_index_for_id "$pid")]}" || echo "standard")
     STATE_VERSION=$(cat "$vf")
+    STATE_STATUS="installed"
     return 0
   fi
 
@@ -2056,6 +2058,16 @@ resolve_runtime_state() {
   echo "Lỗi: trạng thái BA-kit chưa đầy đủ tại $(runtime_label_for_key "$key"). Không có file nào được thay đổi." >&2
   STATE_SOURCE="partial"
   return 1
+}
+
+runtime_state_is_detectable() {
+  [ "${STATE_SOURCE:-empty}" = "v3" ] || [ "${STATE_SOURCE:-empty}" = "v2" ] || [ "${STATE_SOURCE:-empty}" = "legacy" ] || return 1
+  [ "${STATE_STATUS:-installed}" != "uninstalled-with-preserved-files" ]
+}
+
+runtime_state_is_active() {
+  runtime_state_is_detectable || return 1
+  [ "${STATE_STATUS:-installed}" = "installed" ]
 }
 
 # === State write helpers ===
@@ -2096,7 +2108,7 @@ cmd_update() {
   local -a DETECTED_KEYS=()
   for key in "${RUNTIME_KEYS[@]}"; do
     resolve_runtime_state "$key" "read-only" || true
-    if [ "${STATE_SOURCE:-empty}" != "empty" ]; then
+    if runtime_state_is_detectable; then
       DETECTED_KEYS+=("$key")
     fi
   done
@@ -2252,8 +2264,14 @@ cmd_doctor() {
         st=$(echo "$STATE_DATA" | jq -r '.status')
         local alias
         alias=$(product_alias_of "$STATE_PRODUCT_ID")
-        echo "[OK]   ${label}: ${alias} ${STATE_VERSION} (schema-${STATE_SOURCE#v}, ${st})"
-        any_installed=true
+        if [ "$st" = "uninstalled-with-preserved-files" ]; then
+          local preserved
+          preserved=$(echo "$STATE_DATA" | jq '.files | length')
+          echo "[ĐÃ GỠ] ${label}: ${alias} ${STATE_VERSION} (còn ${preserved} file được giữ lại)"
+        else
+          echo "[OK]   ${label}: ${alias} ${STATE_VERSION} (schema-${STATE_SOURCE#v}, ${st})"
+          any_installed=true
+        fi
         ;;
       legacy)
         local alias
@@ -2311,7 +2329,7 @@ cmd_doctor() {
   echo "Components đã cài:"
   for key in "${RUNTIME_KEYS[@]}"; do
     resolve_runtime_state "$key" "read-only" || true
-    [ "${STATE_SOURCE:-empty}" = "empty" ] && continue
+    runtime_state_is_active || continue
 
     local root label
     root=$(runtime_root_for_key "$key")
@@ -2358,7 +2376,13 @@ cmd_version() {
       v3|v2)
         local alias
         alias=$(product_alias_of "$STATE_PRODUCT_ID")
-        echo "  ${label}: ${alias} v${STATE_VERSION}"
+        if [ "${STATE_STATUS:-installed}" = "uninstalled-with-preserved-files" ]; then
+          local preserved
+          preserved=$(echo "$STATE_DATA" | jq '.files | length')
+          echo "  ${label}: ${alias}: đã gỡ (còn ${preserved} file được giữ lại)"
+        else
+          echo "  ${label}: ${alias} v${STATE_VERSION}"
+        fi
         ;;
       legacy)
         local alias
@@ -2399,7 +2423,7 @@ cmd_uninstall() {
   else
     for key in "${RUNTIME_KEYS[@]}"; do
       resolve_runtime_state "$key" "read-only" || true
-      if [ "${STATE_SOURCE:-empty}" != "empty" ]; then
+      if runtime_state_is_detectable; then
         TARGET_RUNTIME_KEYS+=("$key")
       fi
     done
