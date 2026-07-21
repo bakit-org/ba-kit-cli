@@ -8,6 +8,7 @@
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { readPreference } = require('../lib/interaction-language-config');
 
 const SCRIPT = path.join(__dirname, '..', 'ba-kit');
 
@@ -56,12 +57,20 @@ function findBash() {
 const bash = findBash();
 
 if (!bash) {
+  const language = readPreference().language;
   console.error('');
-  console.error('BA-kit requires Git Bash (bash.exe) to run on Windows — none found on PATH');
-  console.error('or in the usual Git for Windows install locations.');
+  if (language === 'en') {
+    console.error('BA-kit requires Git Bash (bash.exe) to run on Windows — none found on PATH');
+    console.error('or in the usual Git for Windows install locations.');
+  } else {
+    console.error('BA-kit cần Git Bash (bash.exe) để chạy trên Windows — không tìm thấy trong PATH');
+    console.error('hoặc các thư mục cài đặt Git for Windows thông dụng.');
+  }
   console.error('');
-  console.error('Install Git for Windows (includes Git Bash): https://git-scm.com/download/win');
-  console.error('Then re-run this command.');
+  console.error(language === 'en'
+    ? 'Install Git for Windows (includes Git Bash): https://git-scm.com/download/win'
+    : 'Cài Git for Windows (bao gồm Git Bash): https://git-scm.com/download/win');
+  console.error(language === 'en' ? 'Then re-run this command.' : 'Sau đó chạy lại lệnh này.');
   console.error('');
   process.exit(1);
 }

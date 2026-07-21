@@ -176,11 +176,11 @@ test('reject archive exceeding compressed limit', async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('reject reserved state paths', async () => {
+test('reject reserved CLI-managed paths', async () => {
   const dir = tempDir();
   const payload = path.join(dir, 'payload');
   fs.mkdirSync(path.join(payload, 'ba-kit'), { recursive: true });
-  fs.writeFileSync(path.join(payload, 'ba-kit', 'state.json'), '{}');
+  fs.writeFileSync(path.join(payload, 'ba-kit', 'preferences.json'), '{}');
 
   const manifest = { name: 'BA-kit Solo Basic', product_id: 'ba-kit-solo-basic', profile: 'solo-basic', version: '0.0.0', min_cli_version: '1.0.0', release_date: '2026-07-15' };
   fs.writeFileSync(path.join(payload, 'manifest.json'), JSON.stringify(manifest));

@@ -9,6 +9,8 @@
     "ba-kit",
     "bin/ba-kit.js",
     "lib/archive-helper.js",
+    "lib/cli-localization.sh",
+    "lib/interaction-language-config.js",
     "lib/runtime-component-contract.js",
     "lib/runtime-registration.js",
     "lib/runtime-lifecycle.js",

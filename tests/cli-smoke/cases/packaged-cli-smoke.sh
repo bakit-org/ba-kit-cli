@@ -48,6 +48,7 @@ PACKED_FILES=$(tar -tzf "$TARBALL_PATH" 2>/dev/null | sed 's|^package/||' | grep
 
 for required in \
   "ba-kit" "bin/ba-kit.js" "lib/archive-helper.js" \
+  "lib/cli-localization.sh" "lib/interaction-language-config.js" \
   "lib/runtime-component-contract.js" "lib/runtime-lifecycle.js" \
   "lib/runtime-registration.js" "README.md" "package.json"; do
   if echo "$PACKED_FILES" | grep -qF "$required"; then
@@ -148,6 +149,15 @@ if echo "$VER_OUTPUT" | grep -q "BA-kit CLI"; then
   pass "packaged CLI version works"
 else
   fail "packaged CLI version failed: $VER_OUTPUT"
+fi
+
+mkdir -p "$SANDBOX/home/.config/ba-kit"
+printf '{"schema_version":1,"interaction_language":"en"}\n' > "$SANDBOX/home/.config/ba-kit/config.json"
+HELP_OUTPUT=$(HOME="$SANDBOX/home" PATH="$SANDBOX/bin:$PATH" BA_KIT_TESTING=1 bash "$EXTRACTED/ba-kit" help 2>&1) || true
+if echo "$HELP_OUTPUT" | grep -q "Supported runtimes"; then
+  pass "packaged CLI loads persisted English preference"
+else
+  fail "packaged CLI did not load English preference: $HELP_OUTPUT"
 fi
 
 rm -rf "$SANDBOX"

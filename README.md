@@ -25,6 +25,14 @@ There is no `--product` flag. Product selection is access-driven:
 - Without GitHub authentication, public Solo Basic is selected automatically.
 - With GitHub authentication, the CLI shows the products available to the account.
 
+## Interaction Language
+
+On the first interactive install, BA-kit asks for `Tiếng Việt` or `English`. The choice controls installer messages, later CLI output, and the language BA agents use when communicating with the user. It does not change the separately governed artifact language.
+
+The preference is stored at `$XDG_CONFIG_HOME/ba-kit/config.json`, or `~/.config/ba-kit/config.json` when `XDG_CONFIG_HOME` is unset. Non-interactive installs deterministically select `vi`. Existing installations without a valid preference also continue in Vietnamese. There is intentionally no public `--language` flag.
+
+Each installed runtime receives a managed `ba-kit/preferences.json` projection with `schema_version: 1` and `interaction_language: vi|en`. Install and update write these projections transactionally; uninstall removes them while preserving the global preference.
+
 ## Runtime Scope
 
 | Key | Runtime | Standard profile |
@@ -56,7 +64,7 @@ Canonical state is stored at:
 ~/.local/share/ba-kit/runtime-state/{runtime}/state.json
 ```
 
-Schema-v3 state records the payload schema, product/profile/version, runtime targets, registrations, managed hashes, and preserved-file status. Legacy and schema-v2 installs migrate forward during install/update.
+Schema-v3 state records the payload schema, product/profile/version, runtime targets, registrations, interaction-language projections, managed hashes, and preserved-file status. Legacy and schema-v2 installs migrate forward during install/update.
 
 Install, update, and uninstall are transactional across selected runtimes. Journals live under `~/.local/share/ba-kit/transactions/`; an interrupted transaction is recovered before a later mutation. Malformed journals or state fail closed. `ba-kit doctor` is read-only and reports the recovery issue.
 

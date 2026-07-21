@@ -36,9 +36,11 @@ new_case() {
 
 install_native() {
   local runtimes="$1"
+  local interaction_language="${2:-vi}"
   node "$LIFECYCLE" install \
     --home "$HOME_DIR" --extract "$EXTRACT_DIR" --runtimes "$runtimes" \
-    --profile standard --product_id ba-kit --product_name BA-kit --version 1.4.0
+    --profile standard --product_id ba-kit --product_name BA-kit --version 1.4.0 \
+    --interaction_language "$interaction_language"
 }
 
 state_file() {
@@ -87,6 +89,8 @@ mv "$CLAUDE_SETTINGS.tmp" "$CLAUDE_SETTINGS"
 for runtime in claude codex agy; do
   [ "$(jq -r '.schema_version' "$(state_file "$runtime")")" = 3 ] || die "$runtime state is not schema v3"
   [ -f "$(jq -r '.targets[0]' "$(state_file "$runtime")")/ba-kit/RECOVERY_REQUIRED.json" ] || die "$runtime compatibility barrier missing"
+  [ "$(jq -r '.preferences.interaction_language' "$(state_file "$runtime")")" = vi ] || die "$runtime interaction preference missing from state"
+  [ "$(jq -r '.interaction_language' "$(jq -r '.targets[0]' "$(state_file "$runtime")")/ba-kit/preferences.json")" = vi ] || die "$runtime preference projection missing"
 done
 [ -f "$HOME_DIR/.claude/agents/ba-reviewer.md" ] || die "Claude native agent missing"
 [ -f "$HOME_DIR/.codex/agents/ba-reviewer.toml" ] || die "Codex native agent missing"
@@ -124,12 +128,43 @@ install_native agy
 for target in antigravity antigravity-cli; do
   [ -f "$HOME_DIR/.gemini/$target/skills/ba-review/SKILL.md" ] || die "$target payload missing"
   [ -f "$HOME_DIR/.gemini/$target/ba-kit/state.json" ] || die "$target state projection missing"
+  [ "$(jq -r '.interaction_language' "$HOME_DIR/.gemini/$target/ba-kit/preferences.json")" = vi ] || die "$target interaction preference missing"
 done
 grep -q '~/.gemini/antigravity/ba-kit/core/contract.yaml' "$HOME_DIR/.gemini/antigravity-cli/skills/ba-start/SKILL.md" || die "Antigravity CLI skill reference changed unexpectedly"
 [ -f "$HOME_DIR/.gemini/antigravity/ba-kit/core/contract.yaml" ] || die "canonical Antigravity support contract missing"
 [ -f "$HOME_DIR/.gemini/antigravity/ba-kit/scripts/validate-review-receipt.py" ] || die "canonical Antigravity validator missing"
 [ "$(python3 "$HOME_DIR/.gemini/antigravity/ba-kit/scripts/validate-review-receipt.py")" = validator-ready ] || die "canonical Antigravity validator is not executable"
 pass "multi-home Antigravity targets"
+
+echo "--- Interaction language projection lifecycle ---"
+new_case
+mkdir -p "$HOME_DIR/.config/ba-kit"
+mkdir -p "$HOME_DIR/.gemini/antigravity-cli" "$HOME_DIR/.gemini/antigravity-ide"
+printf '{"schema_version":1,"interaction_language":"en"}\n' > "$HOME_DIR/.config/ba-kit/config.json"
+install_native claude,codex,agy en
+for target in "$HOME_DIR/.claude" "$HOME_DIR/.codex" "$HOME_DIR/.gemini/antigravity" "$HOME_DIR/.gemini/antigravity-cli" "$HOME_DIR/.gemini/antigravity-ide"; do
+  [ "$(jq -r '.interaction_language' "$target/ba-kit/preferences.json")" = en ] || die "English preference not projected to $target"
+done
+install_native claude,codex,agy en
+[ "$(jq -r '.interaction_language' "$HOME_DIR/.codex/ba-kit/preferences.json")" = en ] || die "reinstall did not preserve English preference"
+if install_native codex fr >/dev/null 2>&1; then die "invalid interaction language accepted"; fi
+[ "$(jq -r '.interaction_language' "$HOME_DIR/.codex/ba-kit/preferences.json")" = en ] || die "invalid language attempt mutated projection"
+node "$LIFECYCLE" uninstall --home "$HOME_DIR" --runtimes claude,codex,agy
+for target in "$HOME_DIR/.claude" "$HOME_DIR/.codex" "$HOME_DIR/.gemini/antigravity" "$HOME_DIR/.gemini/antigravity-cli" "$HOME_DIR/.gemini/antigravity-ide"; do
+  [ ! -e "$target/ba-kit/preferences.json" ] || die "uninstall retained preference projection at $target"
+done
+[ "$(jq -r '.interaction_language' "$HOME_DIR/.config/ba-kit/config.json")" = en ] || die "uninstall removed global interaction preference"
+
+new_case
+mkdir -p "$HOME_DIR/.gemini/antigravity-cli" "$HOME_DIR/.gemini/antigravity-ide" "$HOME_DIR/.codex"
+printf 'model = "user-model"\n' > "$HOME_DIR/.codex/config.toml"
+if BA_KIT_TEST_FAIL_REGISTRATION=codex install_native agy,codex en >/dev/null 2>&1; then
+  die "forced Codex failure unexpectedly succeeded after Antigravity projection"
+fi
+for target in "$HOME_DIR/.gemini/antigravity" "$HOME_DIR/.gemini/antigravity-cli" "$HOME_DIR/.gemini/antigravity-ide"; do
+  [ ! -e "$target/ba-kit/preferences.json" ] || die "multi-runtime rollback retained Antigravity preference at $target"
+done
+pass "interaction preference projection, validation, and uninstall"
 
 echo "--- Schema-v2 and legacy migration ---"
 new_case
@@ -169,6 +204,7 @@ fi
 [ "$(jq -r '.theme' "$HOME_DIR/.claude/settings.json")" = light ] || die "rollback changed Claude user config"
 grep -q 'user-model' "$HOME_DIR/.codex/config.toml" || die "rollback changed Codex user config"
 [ ! -e "$(state_file claude)" ] && [ ! -e "$(state_file codex)" ] || die "rollback left canonical state"
+[ ! -e "$HOME_DIR/.claude/ba-kit/preferences.json" ] && [ ! -e "$HOME_DIR/.codex/ba-kit/preferences.json" ] || die "rollback left interaction preference projection"
 pass "barrier and forced registration rollback"
 
 echo "--- Interrupted transaction recovery ---"
@@ -286,6 +322,7 @@ node "$LIFECYCLE" uninstall --home "$HOME_DIR" --runtimes claude,codex
 grep -q 'user-model' "$HOME_DIR/.codex/config.toml" || die "uninstall removed Codex user config"
 ! grep -q 'BA-kit managed agents' "$HOME_DIR/.codex/config.toml" || die "uninstall retained Codex managed block"
 [ "$(jq -r '.owner' "$HOME_DIR/.codex/hooks.json")" = user ] || die "uninstall removed Codex hook config"
+[ ! -e "$HOME_DIR/.claude/ba-kit/preferences.json" ] && [ ! -e "$HOME_DIR/.codex/ba-kit/preferences.json" ] || die "uninstall retained runtime preference projection"
 ! grep -q '/ba-kit/hooks/' "$HOME_DIR/.codex/hooks.json" || die "uninstall retained nested/direct Codex BA-kit hooks"
 grep -q 'nested-user-hook' "$HOME_DIR/.codex/hooks.json" || die "uninstall removed nested Codex user hook"
 grep -q 'user modified' "$HOME_DIR/.claude/skills/ba-review/SKILL.md" || die "uninstall removed modified managed file"

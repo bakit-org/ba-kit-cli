@@ -39,10 +39,12 @@ write_standard_state() {
   "targets": ["$root"],
   "files": {},
   "registrations": [],
+  "preferences": {"interaction_language":"vi","projections":["$root/ba-kit/preferences.json"]},
   "updated_at": "2026-01-01T00:00:00Z"
 }
 STATE
   cp "$state_dir/state.json" "$root/ba-kit/state.json"
+  printf '{"schema_version":1,"interaction_language":"vi"}\n' > "$root/ba-kit/preferences.json"
 }
 
 echo "=== PHASE 05: Standard Product Regression ==="
@@ -140,6 +142,15 @@ HOME="$HOME"
 if [ -f "$root/skills/unrelated-skill/SKILL.md" ]; then pass; else fail "unrelated skill was deleted"; fi
 if [ -f "$root/settings.json" ]; then pass; else fail "settings.json was deleted"; fi
 
+sandbox_teardown
+
+# Test 9: standard product commands honor persisted English interaction language
+echo "--- Test 9: standard product English interaction ---"
+sandbox_setup
+mkdir -p "$HOME/.config/ba-kit"
+printf '{"schema_version":1,"interaction_language":"en"}\n' > "$HOME/.config/ba-kit/config.json"
+OUTPUT=$(HOME="$HOME" bash "$CLI" help 2>&1)
+if echo "$OUTPUT" | grep -q "Update every installed runtime"; then pass; else fail "standard CLI did not route English output: $OUTPUT"; fi
 sandbox_teardown
 
 echo ""

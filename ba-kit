@@ -12,6 +12,59 @@ if command -v cygpath &>/dev/null; then
   HOME=$(cygpath -u "$HOME" 2>/dev/null || echo "$HOME")
 fi
 
+CLI_ENTRY="$(realpath "$0" 2>/dev/null || echo "$0")"
+CLI_ROOT="$(dirname "$CLI_ENTRY")"
+INTERACTION_CONFIG_HELPER="$CLI_ROOT/lib/interaction-language-config.js"
+LOCALIZATION_HELPER="$CLI_ROOT/lib/cli-localization.sh"
+if [ -f "$LOCALIZATION_HELPER" ]; then
+  # shellcheck source=lib/cli-localization.sh
+  source "$LOCALIZATION_HELPER"
+fi
+BA_KIT_INTERACTION_LANGUAGE="vi"
+BA_KIT_INTERACTION_LANGUAGE_STATUS="missing"
+
+load_interaction_language() {
+  [ -f "$INTERACTION_CONFIG_HELPER" ] || return 0
+  local result
+  result=$(node "$INTERACTION_CONFIG_HELPER" read --home "$HOME" 2>/dev/null || echo "vi|invalid")
+  BA_KIT_INTERACTION_LANGUAGE="${result%%|*}"
+  BA_KIT_INTERACTION_LANGUAGE_STATUS="${result#*|}"
+  case "$BA_KIT_INTERACTION_LANGUAGE" in vi|en) ;; *) BA_KIT_INTERACTION_LANGUAGE="vi"; BA_KIT_INTERACTION_LANGUAGE_STATUS="invalid" ;; esac
+}
+
+persist_interaction_language() {
+  local language="$1"
+  case "$language" in vi|en) ;; *) return 1 ;; esac
+  node "$INTERACTION_CONFIG_HELPER" write --home "$HOME" --language "$language"
+  BA_KIT_INTERACTION_LANGUAGE="$language"
+  BA_KIT_INTERACTION_LANGUAGE_STATUS="valid"
+}
+
+ensure_interaction_language() {
+  load_interaction_language
+  if [ "$BA_KIT_INTERACTION_LANGUAGE_STATUS" = "valid" ]; then return 0; fi
+  if [ "$BA_KIT_INTERACTION_LANGUAGE_STATUS" = "legacy" ]; then
+    persist_interaction_language "$BA_KIT_INTERACTION_LANGUAGE"
+    return 0
+  fi
+
+  local selected="vi"
+  if [ -t 0 ]; then
+    printf '\nNgôn ngữ tương tác / Interaction language:\n\n'
+    printf '  [1] Tiếng Việt\n  [2] English\n\n'
+    local choice=""
+    while true; do
+      read -r -p "Chọn ngôn ngữ / Choose language (1-2) [1]: " choice || { selected="vi"; break; }
+      case "$(lowercase "$choice")" in
+        2|en|english) selected="en"; break ;;
+        ""|1|vi|vietnamese|"tiếng việt") selected="vi"; break ;;
+        *) printf 'Lựa chọn không hợp lệ / Invalid selection.\n' ;;
+      esac
+    done
+  fi
+  persist_interaction_language "$selected"
+}
+
 # === CONFIG ===
 INSTALL_DIR="$HOME/.claude"
 BACKUP_DIR="$INSTALL_DIR/backups"
@@ -162,8 +215,8 @@ parse_runtime_flag() {
   local raw="$1"
   SELECTED_RUNTIME_KEYS=()
   if [ -z "$raw" ]; then
-    echo "Lỗi: --runtime chứa giá trị rỗng."
-    echo "Runtime hợp lệ: ${RUNTIME_KEYS[*]}"
+    ba_kit_say runtime_empty
+    ba_kit_say runtime_valid "${RUNTIME_KEYS[*]}"
     exit 1
   fi
   local IFS=','
@@ -172,13 +225,13 @@ parse_runtime_flag() {
   for tok in "${tokens[@]}"; do
     tok="$(echo "$tok" | tr -d '[:space:]')"
     if [ -z "$tok" ]; then
-      echo "Lỗi: --runtime chứa giá trị rỗng."
-      echo "Runtime hợp lệ: ${RUNTIME_KEYS[*]}"
+      ba_kit_say runtime_empty
+      ba_kit_say runtime_valid "${RUNTIME_KEYS[*]}"
       exit 1
     fi
     if ! runtime_index_for_key "$tok" >/dev/null; then
-      echo "Lỗi: runtime '$tok' không hợp lệ."
-      echo "Runtime hợp lệ: ${RUNTIME_KEYS[*]}"
+      ba_kit_say runtime_invalid "$tok"
+      ba_kit_say runtime_valid "${RUNTIME_KEYS[*]}"
       exit 1
     fi
     case ",$seen," in
@@ -218,6 +271,7 @@ sha256() {
 }
 main() {
   validate_product_registry
+  load_interaction_language
   case "${1:-}" in
     install)   shift; cmd_install "$@" ;;
     update)    cmd_update ;;
@@ -239,61 +293,61 @@ main() {
       if [ -n "$framework_bin" ]; then
         exec "$framework_bin" "$@"
       fi
-      echo "BA-kit CLI — chưa cài framework. Chạy: ba-kit install"
+      ba_kit_say framework_missing
       echo ""
-      echo "Commands:"
-      echo "  ba-kit install                     Cài đặt BA-kit lần đầu"
-      echo "  ba-kit install --version X         Cài version cụ thể (vd: v1.2.0)"
-      echo "  ba-kit install --runtime <list>    Chọn runtime: claude,codex,agy (mặc định: claude)"
-      echo "  ba-kit update                      Cập nhật lên phiên bản mới nhất (mọi runtime đã cài)"
-      echo "  ba-kit doctor                      Kiểm tra trạng thái cài đặt"
-      echo "  ba-kit version                     Hiển thị phiên bản CLI + từng runtime đã cài"
-      echo "  ba-kit uninstall                   Gỡ cài đặt (có backup)"
-      echo "  ba-kit uninstall --runtime <list>  Chỉ gỡ runtime chỉ định (mặc định: tự phát hiện tất cả)"
-      echo ""
-      echo "Runtime hỗ trợ:"
-      echo "  claude  Claude Code — đầy đủ (skills, agents, hooks, templates)"
-      echo "  codex   Codex CLI — chỉ skills"
-      echo "  agy     Antigravity IDE — chỉ skills"
-      echo ""
-      echo "Sản phẩm:"
-      for i in "${!PRODUCT_IDS[@]}"; do
-        if [ "${PRODUCT_VISIBILITIES[$i]}" = "public" ]; then
-          echo "  ${PRODUCT_NAMES[$i]} — Miễn phí (không cần đăng nhập)"
-        else
-          echo "  ${PRODUCT_NAMES[$i]} — Cần mua + gh auth login: ${PRODUCT_URLS[$i]}"
-        fi
-      done
+      usage_commands
+      return
       ;;
   esac
+}
+
+usage_commands() {
+      ba_kit_say commands
+      if [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ]; then
+        echo "  ba-kit install                     Install BA-kit"
+        echo "  ba-kit install --version X         Install a specific version (for example: v1.2.0)"
+        echo "  ba-kit install --runtime <list>    Select runtimes: claude,codex,agy (default: claude)"
+        echo "  ba-kit update                      Update every installed runtime"
+        echo "  ba-kit doctor                      Check installation health"
+        echo "  ba-kit version                     Show CLI and runtime versions"
+        echo "  ba-kit uninstall                   Uninstall with backup"
+        echo "  ba-kit uninstall --runtime <list>  Uninstall selected runtimes"
+      else
+        echo "  ba-kit install                     Cài đặt BA-kit lần đầu"
+        echo "  ba-kit install --version X         Cài version cụ thể (vd: v1.2.0)"
+        echo "  ba-kit install --runtime <list>    Chọn runtime: claude,codex,agy (mặc định: claude)"
+        echo "  ba-kit update                      Cập nhật lên phiên bản mới nhất (mọi runtime đã cài)"
+        echo "  ba-kit doctor                      Kiểm tra trạng thái cài đặt"
+        echo "  ba-kit version                     Hiển thị phiên bản CLI + từng runtime đã cài"
+        echo "  ba-kit uninstall                   Gỡ cài đặt (có backup)"
+        echo "  ba-kit uninstall --runtime <list>  Chỉ gỡ runtime chỉ định (mặc định: tự phát hiện tất cả)"
+      fi
+      echo ""
+      ba_kit_say supported_runtimes
+      if [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ]; then
+        echo "  claude  Claude Code — full profile (skills, agents, hooks, templates)"
+        echo "  codex   Codex CLI — native profile"
+        echo "  agy     Antigravity IDE — native profile"
+      else
+        echo "  claude  Claude Code — đầy đủ (skills, agents, hooks, templates)"
+        echo "  codex   Codex CLI — native"
+        echo "  agy     Antigravity IDE — native"
+      fi
+      echo ""
+      ba_kit_say products
+      for i in "${!PRODUCT_IDS[@]}"; do
+        if [ "${PRODUCT_VISIBILITIES[$i]}" = "public" ]; then
+          ba_kit_say free_product "${PRODUCT_NAMES[$i]}"
+        else
+          ba_kit_say private_product "${PRODUCT_NAMES[$i]}" "${PRODUCT_URLS[$i]}"
+        fi
+      done
 }
 
 usage() {
   echo "BA-kit CLI"
   echo ""
-  echo "Commands:"
-  echo "  ba-kit install                     Cài đặt BA-kit lần đầu"
-  echo "  ba-kit install --version X         Cài version cụ thể"
-  echo "  ba-kit install --runtime <list>    Chọn runtime: claude,codex,agy (mặc định: claude)"
-  echo "  ba-kit update                      Cập nhật lên phiên bản mới nhất (mọi runtime đã cài)"
-  echo "  ba-kit doctor                      Kiểm tra trạng thái cài đặt"
-  echo "  ba-kit version                     Hiển thị phiên bản CLI + từng runtime đã cài"
-  echo "  ba-kit uninstall                   Gỡ cài đặt (có backup)"
-  echo "  ba-kit uninstall --runtime <list>  Chỉ gỡ runtime chỉ định (mặc định: tự phát hiện tất cả)"
-  echo ""
-  echo "Runtime hỗ trợ:"
-  echo "  claude  Claude Code — đầy đủ (skills, agents, hooks, templates)"
-  echo "  codex   Codex CLI — chỉ skills"
-  echo "  agy     Antigravity IDE — chỉ skills"
-  echo ""
-  echo "Sản phẩm:"
-  for i in "${!PRODUCT_IDS[@]}"; do
-    if [ "${PRODUCT_VISIBILITIES[$i]}" = "public" ]; then
-      echo "  ${PRODUCT_NAMES[$i]} — Miễn phí (không cần đăng nhập)"
-    else
-      echo "  ${PRODUCT_NAMES[$i]} — Cần mua + gh auth login: ${PRODUCT_URLS[$i]}"
-    fi
-  done
+  usage_commands
 }
 
 # ============================================================
@@ -386,16 +440,17 @@ auto_install_dep() {
   [ -z "$install_cmd" ] && return 1
 
   echo ""
-  echo "Phát hiện có thể tự động cài ${dep_name} bằng lệnh:"
+  ba_kit_say auto_install_available "$dep_name"
   echo "  ${install_cmd}"
   local reply=""
-  read -r -p "Cài ngay? (y/N): " reply < /dev/tty || return 1
+  ba_kit_message install_now
+  read -r reply < /dev/tty || return 1
   case "$reply" in
     y|Y|yes|Yes) ;;
     *) return 1 ;;
   esac
 
-  echo "Đang cài ${dep_name}..."
+  ba_kit_say installing_dependency "$dep_name"
   local install_ok=0
   eval "$install_cmd" || install_ok=1
 
@@ -405,10 +460,10 @@ auto_install_dep() {
   [ "$os" = "windows" ] && refresh_windows_path
 
   if [ "$install_ok" -eq 0 ]; then
-    echo "  Cài ${dep_name} thành công."
+    ba_kit_say dependency_success "$dep_name"
     return 0
   fi
-  echo "  Cài ${dep_name} thất bại."
+  ba_kit_say dependency_failed "$dep_name"
   return 1
 }
 
@@ -423,16 +478,16 @@ check_common_prereqs() {
   fi
   if ! command -v jq &>/dev/null; then
     echo "=============================================="
-    echo "  CHƯA CÀI jq"
+    [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "  jq IS NOT INSTALLED" || echo "  CHƯA CÀI jq"
     echo "=============================================="
     echo ""
-    echo "jq là công cụ xử lý JSON. BA-kit cần jq để đọc dữ liệu từ GitHub API."
+    [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "jq processes JSON. BA-kit needs it to read GitHub API data." || echo "jq là công cụ xử lý JSON. BA-kit cần jq để đọc dữ liệu từ GitHub API."
     echo ""
-    echo "Cách cài:"
+    ba_kit_say install_instructions
     echo "  macOS:            brew install jq"
     echo "  Windows:          winget install jqlang.jq"
-    echo "                     Hoặc: choco install jq"
-    echo "                     Hoặc tải từ: https://jqlang.org/download"
+    [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "                     Or: choco install jq" || echo "                     Hoặc: choco install jq"
+    [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "                     Or download: https://jqlang.org/download" || echo "                     Hoặc tải từ: https://jqlang.org/download"
     echo "  Linux (Ubuntu):   sudo apt install jq"
     echo "  Linux (Fedora):   sudo dnf install jq"
     echo "=============================================="
@@ -441,12 +496,12 @@ check_common_prereqs() {
 
   if ! command -v curl &>/dev/null; then
     echo "=============================================="
-    echo "  CHƯA CÀI curl"
+    [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "  curl IS NOT INSTALLED" || echo "  CHƯA CÀI curl"
     echo "=============================================="
     echo ""
-    echo "curl là công cụ tải file từ internet. BA-kit cần curl để tải release công khai."
+    [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "curl downloads files. BA-kit needs it for public releases." || echo "curl là công cụ tải file từ internet. BA-kit cần curl để tải release công khai."
     echo ""
-    echo "Cách cài:"
+    ba_kit_say install_instructions
     echo "  macOS:            brew install curl"
     echo "  Windows:          winget install cURL.cURL"
     echo "  Linux (Ubuntu):   sudo apt install curl"
@@ -456,24 +511,37 @@ check_common_prereqs() {
 
   if ! command -v tar &>/dev/null; then
     echo "=============================================="
-    echo "  CHƯA CÀI tar"
+    [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "  tar IS NOT INSTALLED" || echo "  CHƯA CÀI tar"
     echo "=============================================="
     echo ""
-    echo "tar là công cụ giải nén. Hầu hết hệ điều hành đã có sẵn."
-    echo "  macOS: đã có sẵn"
-    echo "  Linux: đã có sẵn"
-    echo "  Windows: cài Git for Windows (đã có tar)"
+    if [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ]; then
+      echo "tar extracts archives. It is preinstalled on most systems."
+      echo "  macOS: preinstalled"
+      echo "  Linux: preinstalled"
+      echo "  Windows: install Git for Windows (includes tar)"
+    else
+      echo "tar là công cụ giải nén. Hầu hết hệ điều hành đã có sẵn."
+      echo "  macOS: đã có sẵn"
+      echo "  Linux: đã có sẵn"
+      echo "  Windows: cài Git for Windows (đã có tar)"
+    fi
     echo "=============================================="
     exit 1
   fi
 
   if ! command -v sha256sum &>/dev/null && ! command -v shasum &>/dev/null; then
     echo "=============================================="
-    echo "  CHƯA CÀI sha256sum hoặc shasum"
+    [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "  sha256sum OR shasum IS NOT INSTALLED" || echo "  CHƯA CÀI sha256sum hoặc shasum"
     echo "=============================================="
-    echo "Cần công cụ kiểm tra checksum."
-    echo "  macOS: đã có shasum"
-    echo "  Linux: đã có sha256sum"
+    if [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ]; then
+      echo "A checksum tool is required."
+      echo "  macOS: shasum is preinstalled"
+      echo "  Linux: sha256sum is preinstalled"
+    else
+      echo "Cần công cụ kiểm tra checksum."
+      echo "  macOS: đã có shasum"
+      echo "  Linux: đã có sha256sum"
+    fi
     echo "=============================================="
     exit 1
   fi
@@ -491,32 +559,32 @@ require_private_github_access() {
   fi
   if ! command -v gh &>/dev/null; then
     echo "=============================================="
-    echo "  CHƯA CÀI GITHUB CLI (gh)"
+    [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "  GITHUB CLI (gh) IS NOT INSTALLED" || echo "  CHƯA CÀI GITHUB CLI (gh)"
     echo "=============================================="
     echo ""
-    echo "$product là sản phẩm riêng tư, cần GitHub CLI để xác thực."
+    ba_kit_say private_requires_gh "$product"
     echo ""
-    echo "Cách cài:"
+    ba_kit_say install_instructions
     echo "  macOS:            brew install gh"
     echo "  Windows:          winget install GitHub.CLI"
-    echo "                     Hoặc tải từ: https://cli.github.com"
+    [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "                     Or download: https://cli.github.com" || echo "                     Hoặc tải từ: https://cli.github.com"
     echo "  Linux (Ubuntu):   sudo apt install gh"
     echo "  Linux (Fedora):   sudo dnf install gh"
     echo ""
-    echo "Sau khi cài, chạy: gh auth login"
-    echo "  → Chọn: GitHub.com → HTTPS → Login with a web browser"
+    ba_kit_say after_install_gh
+    [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "  → Choose: GitHub.com → HTTPS → Login with a web browser" || echo "  → Chọn: GitHub.com → HTTPS → Login with a web browser"
     echo "=============================================="
     exit 1
   fi
 
   if ! gh auth status -h github.com &>/dev/null 2>&1; then
     echo "=============================================="
-    echo "  CHƯA ĐĂNG NHẬP GITHUB"
+    [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "  GITHUB SIGN-IN REQUIRED" || echo "  CHƯA ĐĂNG NHẬP GITHUB"
     echo "=============================================="
     echo ""
-    echo "$product là sản phẩm riêng tư, cần đăng nhập GitHub."
+    ba_kit_say private_requires_login "$product"
     echo ""
-    echo "Chạy lệnh sau và làm theo hướng dẫn:"
+    ba_kit_say run_following
     echo "  gh auth login"
     echo "=============================================="
     exit 1
@@ -536,14 +604,14 @@ check_prereqs() {
     echo "GitHub CLI là công cụ để máy tính xác thực với GitHub."
     echo "BA-kit cần gh CLI để tải content từ private repo."
     echo ""
-    echo "Cách cài:"
+    ba_kit_say install_instructions
     echo "  macOS:            brew install gh"
     echo "  Windows:          winget install GitHub.CLI"
     echo "                     Hoặc tải từ: https://cli.github.com"
     echo "  Linux (Ubuntu):   sudo apt install gh"
     echo "  Linux (Fedora):   sudo dnf install gh"
     echo ""
-    echo "Sau khi cài, chạy: gh auth login"
+    ba_kit_say after_install_gh
     echo "  → Chọn: GitHub.com"
     echo "  → Chọn: HTTPS"
     echo "  → Chọn: Login with a web browser"
@@ -582,14 +650,14 @@ select_product() {
   if [ ${#accessible_indices[@]} -eq 0 ]; then
     echo ""
     echo "=============================================="
-    echo "  CHƯA CÓ QUYỀN TRUY CẬP"
+    [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "  NO PRODUCT ACCESS" || echo "  CHƯA CÓ QUYỀN TRUY CẬP"
     echo "=============================================="
     echo ""
-    echo "Bạn chưa có quyền truy cập bất kỳ sản phẩm BA-kit nào."
+    ba_kit_say no_product_access
     echo ""
-    echo "BA-kit Solo Basic là sản phẩm miễn phí — vui lòng báo lỗi này."
+    ba_kit_say free_product_error
     echo ""
-    echo "Các sản phẩm trả phí:"
+    ba_kit_say paid_products
     for j in "${!PRODUCT_NAMES[@]}"; do
       echo "    ${PRODUCT_NAMES[$j]}: ${PRODUCT_URLS[$j]}"
     done
@@ -599,16 +667,16 @@ select_product() {
 
   if [ ${#accessible_indices[@]} -eq 1 ]; then
     select_product_index "${accessible_indices[0]}"
-    echo "  Phát hiện: ${SELECTED_PRODUCT}"
+    ba_kit_say detect_product "$SELECTED_PRODUCT"
     if ! $can_private && [ "$SELECTED_VISIBILITY" = "public" ]; then
-      echo "  (sản phẩm riêng tư cần 'gh auth login' để hiển thị)"
+      ba_kit_say private_hidden
     fi
     return 0
   fi
 
   # Multiple candidates — numbered prompt
   echo ""
-  echo "Bạn có quyền truy cập nhiều sản phẩm BA-kit:"
+  ba_kit_say multiple_products
   echo ""
   local j=0
   while [ "$j" -lt "${#accessible_indices[@]}" ]; do
@@ -616,16 +684,17 @@ select_product() {
     j=$((j + 1))
   done
   echo ""
-  read -r -p "Chọn sản phẩm muốn cài (1-${#accessible_indices[@]}): " choice
+  ba_kit_message choose_product "${#accessible_indices[@]}"
+  read -r choice
 
   if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#accessible_indices[@]} ]; then
-    echo "Lựa chọn không hợp lệ."
+    ba_kit_say invalid_choice
     exit 1
   fi
 
   local pick=$((choice - 1))
   select_product_index "${accessible_indices[$pick]}"
-  echo "  Đã chọn: ${SELECTED_PRODUCT}"
+  ba_kit_say selected_product "$SELECTED_PRODUCT"
 }
 
 # ============================================================
@@ -648,7 +717,7 @@ get_release_json() {
     local json
     json=$(curl -fsSL -H "Accept: application/vnd.github+json" \
       "https://api.github.com/${endpoint}" 2>/dev/null) || {
-      echo "Lỗi: Không thể lấy release công khai của ${SELECTED_PRODUCT}. Kiểm tra mạng và thử lại."
+      ba_kit_say public_release_error "$SELECTED_PRODUCT"
       exit 1
     }
     echo "$json"
@@ -656,7 +725,7 @@ get_release_json() {
     require_private_github_access "$SELECTED_PRODUCT"
     local json
     json=$(gh api "${endpoint}" 2>/dev/null) || {
-      echo "Lỗi: Không thể lấy release của ${SELECTED_PRODUCT}."
+      ba_kit_say private_release_error "$SELECTED_PRODUCT"
       exit 1
     }
     echo "$json"
@@ -670,7 +739,7 @@ select_version() {
   local target="${1:-latest}"
 
   if [ "$target" = "latest" ]; then
-    echo "Đang tìm phiên bản mới nhất..."
+    ba_kit_say find_latest
   fi
 
   local release_json
@@ -678,10 +747,10 @@ select_version() {
   SELECTED_VERSION=$(echo "$release_json" | jq -r '.tag_name')
   RELEASE_NOTES=$(echo "$release_json" | jq -r '.body // ""')
 
-  echo "  Phiên bản: ${SELECTED_VERSION}"
+  ba_kit_say selected_version "$SELECTED_VERSION"
   if [ -n "${RELEASE_NOTES:-}" ] && [ "${RELEASE_NOTES:-}" != "null" ]; then
     echo ""
-    echo "Thay đổi trong phiên bản này:"
+    ba_kit_say release_changes
     echo "----------------------------------------"
     echo "$RELEASE_NOTES" | head -20
     echo "----------------------------------------"
@@ -715,17 +784,17 @@ check_cross_product_for_runtime() {
   if [ "$existing_product" != "$SELECTED_PRODUCT" ]; then
     echo ""
     echo "=============================================="
-    echo "  PHÁT HIỆN XUNG ĐỘT SẢN PHẨM (${label})"
+    ba_kit_say product_conflict "$label"
     echo "=============================================="
     echo ""
-    echo "Local đang cài: ${existing_product}"
-    echo "Bạn muốn cài:   ${SELECTED_PRODUCT}"
+    ba_kit_say installed_product "$existing_product"
+    ba_kit_say requested_product "$SELECTED_PRODUCT"
     echo ""
-    echo "Không thể cài đè sản phẩm khác. Bạn cần gỡ ${existing_product} trước:"
+    ba_kit_say cannot_overwrite "$existing_product"
     echo ""
     echo "  ba-kit uninstall --runtime ${key}"
     echo ""
-    echo "Sau đó chạy lại:"
+    ba_kit_say then_rerun
     echo "  ba-kit install --runtime ${key}"
     echo "=============================================="
     exit 1
@@ -736,17 +805,18 @@ check_cross_product_for_runtime() {
     current=$(cat "$version_file")
     if [ "${current#v}" = "${SELECTED_VERSION#v}" ]; then
       if [ ${#SELECTED_RUNTIME_KEYS[@]} -gt 1 ]; then
-        echo "${label}: ${SELECTED_PRODUCT} ${SELECTED_VERSION} đã được cài đặt, bỏ qua."
+        ba_kit_say already_installed_skip "$label" "$SELECTED_PRODUCT" "$SELECTED_VERSION"
         return 1
       fi
-      echo "${SELECTED_PRODUCT} ${SELECTED_VERSION} đã được cài đặt."
+      ba_kit_say already_installed "$SELECTED_PRODUCT" "$SELECTED_VERSION"
       echo ""
-      read -r -p "Bạn có muốn cài lại không? (y/N): " confirm
+      ba_kit_message reinstall_confirm
+      read -r confirm
       if [ "$(lowercase "$confirm")" != "y" ]; then
-        echo "Đã hủy."
+        ba_kit_say cancelled
         exit 0
       fi
-      echo "Đang cài lại ${SELECTED_PRODUCT}..."
+      ba_kit_say reinstalling "$SELECTED_PRODUCT"
     fi
   fi
 
@@ -757,7 +827,7 @@ check_cross_product_for_runtime() {
 # B5: TẢI RELEASE + VERIFY CHECKSUM
 # ============================================================
 download_release() {
-  echo "Đang tải ${SELECTED_PRODUCT} ${SELECTED_VERSION}..."
+  ba_kit_say download_release "$SELECTED_PRODUCT" "$SELECTED_VERSION"
 
   TMP_DIR=$(mktemp -d)
   local archive_name="ba-kit-${SELECTED_VERSION}.tar.gz"
@@ -772,7 +842,7 @@ download_release() {
     archive_url=$(echo "$release_json" | jq -r --arg name "$archive_name" '
       .assets[] | select(.name == $name) | .browser_download_url')
     if [ -z "$archive_url" ] || [ "$archive_url" = "null" ]; then
-      echo "Lỗi: Không tìm thấy asset ${archive_name} trong release ${SELECTED_VERSION}."
+      ba_kit_say asset_missing "$archive_name" "$SELECTED_VERSION"
       rm -rf "$TMP_DIR"
       exit 1
     fi
@@ -781,35 +851,35 @@ download_release() {
     checksum_url=$(echo "$release_json" | jq -r --arg name "$checksum_name" '
       .assets[] | select(.name == $name) | .browser_download_url')
     if [ -z "$checksum_url" ] || [ "$checksum_url" = "null" ]; then
-      echo "Lỗi: Release ${SELECTED_VERSION} thiếu checksum bắt buộc; chưa cài file nào."
+      ba_kit_say checksum_required "$SELECTED_VERSION"
       rm -rf "$TMP_DIR"
       exit 1
     fi
 
     curl -fL --retry 2 --retry-delay 1 -o "$ARCHIVE_FILE" "$archive_url" 2>/dev/null || {
-      echo "Lỗi: Không thể tải ${SELECTED_PRODUCT} ${SELECTED_VERSION}."
-      echo "Vui lòng kiểm tra kết nối mạng và thử lại."
+      ba_kit_say download_error "$SELECTED_PRODUCT" "$SELECTED_VERSION"
+      ba_kit_say check_network
       rm -rf "$TMP_DIR"
       exit 1
     }
 
     local checksum_file="${TMP_DIR}/checksum.sha256"
     curl -fL -o "$checksum_file" "$checksum_url" 2>/dev/null || {
-      echo "Lỗi: Không thể tải checksum."
+      ba_kit_say checksum_download_error
       rm -rf "$TMP_DIR"
       exit 1
     }
 
-    echo "  Đã tải xong. Đang kiểm tra checksum..."
+    ba_kit_say download_done
     local expected actual
     expected=$(awk '{print $1}' "$checksum_file")
     actual=$(sha256 "$ARCHIVE_FILE")
     if [ "$expected" != "$actual" ]; then
-      echo "Lỗi: File tải về bị lỗi (checksum không khớp)."
+      ba_kit_say checksum_mismatch
       rm -rf "$TMP_DIR"
       exit 1
     fi
-    echo "  Checksum hợp lệ."
+    ba_kit_say checksum_valid
   else
     # Private: use gh release download
     require_private_github_access "$SELECTED_PRODUCT"
@@ -818,12 +888,12 @@ download_release() {
         -p "$archive_name" \
         -O "$ARCHIVE_FILE" \
         --clobber 2>/dev/null; then
-      echo "Lỗi: Không thể tải ${SELECTED_PRODUCT} ${SELECTED_VERSION}."
+      ba_kit_say download_error "$SELECTED_PRODUCT" "$SELECTED_VERSION"
       rm -rf "$TMP_DIR"
       exit 1
     fi
 
-    echo "  Đã tải xong. Đang kiểm tra checksum..."
+    ba_kit_say download_done
     local checksum_file="${TMP_DIR}/checksum.sha256"
     if gh release download "$SELECTED_VERSION" \
         -R "$SELECTED_REPO" \
@@ -834,13 +904,13 @@ download_release() {
       expected=$(awk '{print $1}' "$checksum_file")
       actual=$(sha256 "$ARCHIVE_FILE")
       if [ "$expected" != "$actual" ]; then
-        echo "Lỗi: File tải về bị lỗi (checksum không khớp)."
+        ba_kit_say checksum_mismatch
         rm -rf "$TMP_DIR"
         exit 1
       fi
-      echo "  Checksum hợp lệ."
+      ba_kit_say checksum_valid
     else
-      echo "  Không tìm thấy file checksum, bỏ qua bước kiểm tra."
+      ba_kit_say checksum_skipped
     fi
   fi
 }
@@ -928,10 +998,10 @@ do_backup() {
   if [ -d "$src_dir" ] && [ "$(ls -A "$src_dir" 2>/dev/null)" ]; then
     BACKUP_PATH="${backup_dir}/$(date +%Y-%m-%d-%H%M%S)"
     mkdir -p "$BACKUP_PATH"
-    echo "Đang backup ${src_dir} hiện tại vào:"
+    ba_kit_say backup_start "$src_dir"
     echo "  ${BACKUP_PATH}"
     _copy_safe "$src_dir" "$BACKUP_PATH"
-    echo "  Backup hoàn tất."
+    ba_kit_say backup_done
     # ponytail: keep 5 most recent backups, delete older
     prune_backups "$backup_dir" "$keep"
   fi
@@ -947,7 +1017,7 @@ prune_backups() {
       rm -rf "$dir"
       deleted=$((deleted + 1))
     done < <(ls -1dt "$backup_dir"/*/ 2>/dev/null | tail -n +$((keep + 1)) | tr '\n' '\0')
-    echo "  Đã dọn ${deleted} backup cũ (giữ ${keep} gần nhất)."
+    ba_kit_say backup_cleaned "$deleted" "$keep"
   fi
 }
 
@@ -964,7 +1034,7 @@ fi
 RUNTIME_LIFECYCLE_HELPER="$(dirname "$ARCHIVE_HELPER")/runtime-lifecycle.js"
 
 inspect_archive() {
-  echo "Đang kiểm tra archive..."
+  ba_kit_say inspect_archive
   local result
   result=$(node "$ARCHIVE_HELPER" inspect \
     --archive "$ARCHIVE_FILE" \
@@ -973,33 +1043,32 @@ inspect_archive() {
     --runtimes "$(IFS=,; echo "${SELECTED_RUNTIME_KEYS[*]:-claude}")" \
     --selected-product "$SELECTED_PRODUCT_ID" \
     --selected-version "$SELECTED_VERSION" 2>&1) || {
-    echo "Lỗi: Archive validation failed."
     local err
     err=$(echo "$result" | jq -r '.error // "unknown error"' 2>/dev/null || echo "$result")
-    echo "  $err"
+    ba_kit_say archive_invalid "$err"
     exit 1
   }
   local ok
   ok=$(echo "$result" | jq -r '.ok' 2>/dev/null)
   if [ "$ok" != "true" ]; then
-    echo "Lỗi: Archive không hợp lệ: $result"
+    ba_kit_say archive_invalid "$result"
     exit 1
   fi
-  echo "  Archive hợp lệ."
+  ba_kit_say archive_valid
 }
 
 extract_archive() {
-  echo "Đang giải nén..."
+  ba_kit_say extract_archive
   EXTRACT_DIR="${TMP_DIR}/extracted"
   mkdir -p "$EXTRACT_DIR"
   node "$ARCHIVE_HELPER" extract \
     --archive "$ARCHIVE_FILE" \
     --profile "$SELECTED_PROFILE" \
     --destination "$EXTRACT_DIR" 2>&1 || {
-    echo "Lỗi: Không thể giải nén archive."
+    ba_kit_say extract_failed
     exit 1
   }
-  echo "  Giải nén hoàn tất."
+  ba_kit_say extract_done
 }
 
 # Legacy shim
@@ -1082,7 +1151,7 @@ merge_files() {
     fi
   done < <(find "$src" -print0)
 
-  echo "  ${created} file mới | ${updated} file cập nhật | ${preserved} file giữ nguyên (đã tùy chỉnh)"
+  ba_kit_say file_counts "$created" "$updated" "$preserved"
 }
 
 record_reconciled_hash() {
@@ -1106,7 +1175,7 @@ is_protected() {
 # ============================================================
 post_install() {
   local root="$1"
-  echo "Đang hoàn tất cài đặt..."
+  ba_kit_say finalizing
 
   if [ -f "$EXTRACT_DIR/.local/bin/ba-kit" ]; then
     mkdir -p "$root/ba-kit"
@@ -1133,7 +1202,7 @@ post_install() {
     ln -sfn "$root/ba-kit/core" "$root/core" 2>/dev/null || true
   fi
 
-  echo "  Hoàn tất."
+  ba_kit_say complete
 }
 
 register_hooks() {
@@ -1148,7 +1217,7 @@ register_hooks() {
     auto_install_dep "Python 3" "python3" "python3" "python3" "python" "python3" "Python.Python.3" "python3" "python" || true
   fi
   if ! command -v python3 &>/dev/null; then
-    echo "  [CẢNH BÁO] Python3 chưa cài — bỏ qua đăng ký hooks (macOS: brew install python3)."
+      [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "  [WARNING] Python3 is not installed — hook registration skipped (macOS: brew install python3)." || echo "  [CẢNH BÁO] Python3 chưa cài — bỏ qua đăng ký hooks (macOS: brew install python3)."
     return
   fi
 
@@ -1274,7 +1343,7 @@ clean_hooks_json() {
     auto_install_dep "Python 3" "python3" "python3" "python3" "python" "python3" "Python.Python.3" "python3" "python" || true
   fi
   if ! command -v python3 &>/dev/null; then
-    echo "  [CẢNH BÁO] Python3 chưa cài — bỏ qua dọn hooks cũ."
+    [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "  [WARNING] Python3 is not installed — old hook cleanup skipped." || echo "  [CẢNH BÁO] Python3 chưa cài — bỏ qua dọn hooks cũ."
     return
   fi
 
@@ -1337,7 +1406,7 @@ PYEOF
 # ============================================================
 save_state() {
   local version_file="$1" product_file="$2" manifest_file="$3" manifest_source="$4"
-  echo "Đang lưu thông tin..."
+  [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "Saving metadata..." || echo "Đang lưu thông tin..."
 
   mkdir -p "$(dirname "$version_file")"
   echo "$SELECTED_VERSION" > "$version_file"
@@ -1369,7 +1438,7 @@ cleanup() {
 show_result() {
   echo ""
   echo "=============================================="
-  echo "  CÀI ĐẶT THÀNH CÔNG!"
+  ba_kit_say install_success
   echo "=============================================="
 
   for key in "$@"; do
@@ -1380,8 +1449,8 @@ show_result() {
 
     echo ""
     echo "  -- ${label} (${root}) --"
-    echo "  Sản phẩm:   ${SELECTED_PRODUCT}"
-    echo "  Phiên bản:  ${SELECTED_VERSION}"
+    ba_kit_say product_label "$SELECTED_PRODUCT"
+    ba_kit_say version_label "$SELECTED_VERSION"
 
     if [ "$SELECTED_PROFILE" = "solo-basic" ]; then
       local skill_count template_count
@@ -1392,7 +1461,7 @@ show_result() {
       if [ -d "$root/core" ]; then
         echo "  Core:       ${root}/core"
       fi
-      echo "  Không có agents, hooks, hay scripts."
+      ba_kit_say no_agents_hooks
     elif [ "$scope" = "full" ]; then
       local skill_count agent_count template_count hook_count
       skill_count=$(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ')
@@ -1414,31 +1483,31 @@ show_result() {
     local latest_backup
     latest_backup=$(ls -1dt "$backup_dir"/*/ 2>/dev/null | head -1)
     if [ -n "$latest_backup" ]; then
-      echo "  Backup cũ:  ${latest_backup}"
+      [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "  Previous backup: ${latest_backup}" || echo "  Backup cũ:  ${latest_backup}"
     fi
   done
 
   if [ "$SELECTED_PROFILE" = "solo-basic" ]; then
     echo ""
-    echo "  Bắt đầu sử dụng:"
-    echo "    Vào Claude Code, Codex hoặc AGY"
-    echo "    Gõ /ba-start để bắt đầu dự án BA"
+    ba_kit_say get_started
+    ba_kit_say get_started_runtime
+    ba_kit_say get_started_command
     echo ""
-    echo "  Cập nhật sau này:"
+    ba_kit_say update_later
     echo "    ba-kit update"
     echo ""
-    echo "  Kiểm tra sức khỏe:"
+      ba_kit_say health_check
     echo "    ba-kit doctor"
   else
     echo ""
-    echo "  Bắt đầu sử dụng:"
-    echo "    Vào Claude Code (/claude trong Terminal)"
-    echo "    Gõ /ba-start để bắt đầu dự án BA"
+    ba_kit_say get_started
+    if [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ]; then echo "    Open Claude Code (/claude in Terminal)"; else echo "    Vào Claude Code (/claude trong Terminal)"; fi
+    ba_kit_say get_started_command
     echo ""
-    echo "  Cập nhật sau này:"
+    ba_kit_say update_later
     echo "    ba-kit update"
     echo ""
-    echo "  Kiểm tra sức khỏe:"
+    ba_kit_say health_check
     echo "    ba-kit doctor"
   fi
   echo "=============================================="
@@ -1510,7 +1579,7 @@ validate_solo_release_payload() {
   local actual_roots
   actual_roots=$(cd "$extract_dir" && ls -A | sort | paste -sd ' ' -)
   if [ "$actual_roots" != "$expected_roots" ]; then
-    echo "Lỗi: Cấu trúc archive Solo không đúng. Mong đợi: ${expected_roots}, thực tế: ${actual_roots}"
+    ba_kit_say solo_structure_error "$expected_roots" "$actual_roots"
     exit 1
   fi
 
@@ -1518,7 +1587,7 @@ validate_solo_release_payload() {
   local claude_children
   claude_children=$(cd "$extract_dir/.claude" && ls -A | sort | paste -sd ' ' - 2>/dev/null)
   if [ "$claude_children" != "skills templates" ]; then
-    echo "Lỗi: .claude/ trong archive Solo phải chỉ có skills/ và templates/"
+    ba_kit_say solo_claude_error
     exit 1
   fi
 
@@ -1526,7 +1595,7 @@ validate_solo_release_payload() {
   local bakit_children
   bakit_children=$(cd "$extract_dir/ba-kit" && ls -A | sort | paste -sd ' ' - 2>/dev/null)
   if [ "$bakit_children" != "core" ]; then
-    echo "Lỗi: ba-kit/ trong archive Solo phải chỉ có core/"
+    ba_kit_say solo_core_error
     exit 1
   fi
 
@@ -1535,7 +1604,7 @@ validate_solo_release_payload() {
   local actual_skills
   actual_skills=$(cd "$extract_dir/.claude/skills" && ls -d */ 2>/dev/null | sed 's|/||g' | sort | paste -sd ' ' -)
   if [ "$actual_skills" != "$expected_skills" ]; then
-    echo "Lỗi: Skill set không đúng. Mong đợi: ${expected_skills}, thực tế: ${actual_skills}"
+    ba_kit_say solo_skills_error "$expected_skills" "$actual_skills"
     exit 1
   fi
 }
@@ -1562,8 +1631,8 @@ install_preflight() {
       if [ -f "$pfile" ]; then
         existing=$(cat "$pfile")
         if [ "$existing" != "$SELECTED_PRODUCT" ]; then
-          echo "Lỗi: ${SELECTED_PRODUCT} không thể cài đè lên ${existing}."
-          echo "Gỡ ${existing} trước: ba-kit uninstall --runtime ${key}"
+          ba_kit_say product_overwrite_error "$SELECTED_PRODUCT" "$existing"
+          ba_kit_say uninstall_first "$existing" "$key"
           exit 1
         fi
       fi
@@ -1597,6 +1666,7 @@ transaction_runtime_paths() {
     "ba-kit/PRODUCT_ID" \
     "ba-kit/release-manifest.json" \
     "ba-kit/RECOVERY_REQUIRED.json" \
+    "ba-kit/preferences.json" \
     | sort -u
 }
 
@@ -1667,9 +1737,9 @@ rollback_install_transaction() {
 transaction_failed() {
   local status="$1"
   trap - ERR INT TERM
-  echo "Lỗi: cài đặt thất bại, đang khôi phục các runtime đã thay đổi..." >&2
+  ba_kit_say transaction_rollback >&2
   rollback_install_transaction "$TRANSACTION_DIR" || \
-    echo "Lỗi: một runtime cần khôi phục thủ công; chạy ba-kit doctor." >&2
+    ba_kit_say manual_recovery >&2
   rm -rf "$TRANSACTION_DIR"
   exit "$status"
 }
@@ -1683,7 +1753,8 @@ apply_runtime_transaction() {
     --profile "$SELECTED_PROFILE" \
     --product_id "$SELECTED_PRODUCT_ID" \
     --product_name "$SELECTED_PRODUCT" \
-    --version "${SELECTED_VERSION#v}"
+    --version "${SELECTED_VERSION#v}" \
+    --interaction_language "$BA_KIT_INTERACTION_LANGUAGE"
 }
 
 # === INSTALL-SPECIFIC: Apply payload for one runtime ===
@@ -1775,7 +1846,7 @@ install_runtime_payload() {
     done <<< "$keys"
   done < <(profile_components "$SELECTED_PROFILE" "$key")
 
-  echo "  ${created} file mới | ${updated} file cập nhật | ${preserved} file giữ nguyên"
+  ba_kit_say file_counts "$created" "$updated" "$preserved"
 
   # Increment generation and write
   generation=$((generation + 1))
@@ -1800,7 +1871,7 @@ post_install_runtimes() {
 # Standard Claude post-install (hooks, pip, framework binary, core symlink)
 post_install_standard_claude() {
   local root="$1"
-  echo "Đang hoàn tất cài đặt..."
+  ba_kit_say finalizing
 
   if [ -f "$EXTRACT_DIR/.local/bin/ba-kit" ]; then
     mkdir -p "$root/ba-kit"
@@ -1824,13 +1895,13 @@ post_install_standard_claude() {
     ln -sfn "$root/ba-kit/core" "$root/core" 2>/dev/null || true
   fi
 
-  echo "  Hoàn tất."
+  ba_kit_say complete
 }
 
 # Solo post-install: no hooks, no pip, no symlinks, no settings
 post_install_solo() {
   local root="$1"
-  echo "  Solo Basic: không cần hooks, pip, hoặc symlink."
+  [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "  Solo Basic: hooks, pip, and symlinks are not required." || echo "  Solo Basic: không cần hooks, pip, hoặc symlink."
 }
 
 # Legacy post_install shim
@@ -1861,18 +1932,19 @@ cmd_install() {
         shift 2
         ;;
       *)
-        echo "Không hiểu tham số: $1"
-        echo "Dùng: ba-kit install [--version v1.2.0] [--runtime claude,codex,agy]"
+        ba_kit_say unknown_argument "$1"
+        ba_kit_say install_usage
         exit 1
         ;;
     esac
   done
 
+  ensure_interaction_language
   parse_runtime_flag "$target_runtime"
 
   echo ""
   echo "=============================================="
-  echo "  BA-KIT INSTALL"
+  ba_kit_say install_title
   echo "=============================================="
   echo ""
 
@@ -1888,7 +1960,7 @@ cmd_install() {
     fi
   done
   if [ ${#RUNTIMES_TO_PROCESS[@]} -eq 0 ]; then
-    echo "Không có runtime nào cần cài/cập nhật."
+    ba_kit_say no_runtime_work
     exit 0
   fi
 
@@ -1896,7 +1968,7 @@ cmd_install() {
   extract_release
   install_preflight "${RUNTIMES_TO_PROCESS[@]}"
 
-  echo "Đang cài đặt files..."
+  ba_kit_say install_files
 
   # Keep user-visible backups, then commit every runtime as one transaction.
   for key in "${RUNTIMES_TO_PROCESS[@]}"; do
@@ -1966,7 +2038,7 @@ resolve_runtime_state() {
     local st
     st=$(jq -r '.status // "installed"' "$state_file" 2>/dev/null)
     if [ "$st" = "recovery-required" ] && [ "$mode" = "mutating" ]; then
-      echo "Lỗi: trạng thái cần khôi phục tại $(runtime_label_for_key "$key"). Chạy ba-kit doctor để xem hướng dẫn." >&2
+      ba_kit_say state_recovery "$(runtime_label_for_key "$key")" >&2
       STATE_SOURCE="recovery"
       return 1
     fi
@@ -1982,7 +2054,7 @@ resolve_runtime_state() {
       (.files | type == "object")
     ' "$state_file" >/dev/null 2>&1; then
       STATE_SOURCE="partial"
-      echo "Lỗi: schema-v3 không hợp lệ tại $(runtime_label_for_key "$key"). Chạy ba-kit doctor." >&2
+      ba_kit_say state_invalid "$(runtime_label_for_key "$key")" >&2
       [ "$mode" = "mutating" ] && return 1
       return 0
     fi
@@ -2001,9 +2073,9 @@ resolve_runtime_state() {
     STATE_SOURCE="recovery"
     STATE_DATA=$(cat "$recovery_marker")
     if [ "$(jq -r '.status // ""' "$recovery_marker" 2>/dev/null)" = "cli-upgrade-required" ]; then
-      echo "Lỗi: ${key} cần CLI >= 1.4.0 để tiếp tục." >&2
+      ba_kit_say cli_upgrade "$key" >&2
     elif [ "$mode" = "mutating" ]; then
-      echo "Lỗi: trạng thái cần khôi phục tại $(runtime_label_for_key "$key"). Chạy ba-kit doctor để xem hướng dẫn." >&2
+      ba_kit_say state_recovery "$(runtime_label_for_key "$key")" >&2
       return 1
     fi
     return 0
@@ -2028,7 +2100,7 @@ resolve_runtime_state() {
     local tf="${rroot}/ba-kit/transaction.json"
     local rf="${rroot}/ba-kit/RECOVERY_REQUIRED.json"
     if [ -f "$tf" ] || [ -f "$rf" ]; then
-      echo "Lỗi: trạng thái BA-kit chưa đầy đủ tại $(runtime_label_for_key "$key"). Không có file nào được thay đổi." >&2
+      ba_kit_say state_incomplete "$(runtime_label_for_key "$key")" >&2
       return 1
     fi
     STATE_SOURCE="empty"
@@ -2042,7 +2114,7 @@ resolve_runtime_state() {
     local pid
     pid=$(product_id_for_name "$product_name")
     if [ -z "$pid" ]; then
-      echo "Lỗi: sản phẩm '${product_name}' không được hỗ trợ tại $(runtime_label_for_key "$key")." >&2
+      ba_kit_say unsupported_product "$product_name" "$(runtime_label_for_key "$key")" >&2
       STATE_SOURCE="unknown"
       return 1
     fi
@@ -2055,7 +2127,7 @@ resolve_runtime_state() {
   fi
 
   # Partial/orphan state
-  echo "Lỗi: trạng thái BA-kit chưa đầy đủ tại $(runtime_label_for_key "$key"). Không có file nào được thay đổi." >&2
+  ba_kit_say state_incomplete "$(runtime_label_for_key "$key")" >&2
   STATE_SOURCE="partial"
   return 1
 }
@@ -2098,7 +2170,7 @@ commit_canonical_state() {
 cmd_update() {
   echo ""
   echo "=============================================="
-  echo "  BA-KIT UPDATE"
+  ba_kit_say update_title
   echo "=============================================="
   echo ""
 
@@ -2114,8 +2186,8 @@ cmd_update() {
   done
 
   if [ ${#DETECTED_KEYS[@]} -eq 0 ]; then
-    echo "BA-kit chưa được cài đặt."
-    echo "Chạy: ba-kit install"
+    ba_kit_say not_installed
+    ba_kit_say run_install
     exit 1
   fi
 
@@ -2138,7 +2210,7 @@ cmd_update() {
   done
 
   if [ ${#GROUP_IDS[@]} -gt 1 ]; then
-    echo "Đang cập nhật ${#GROUP_IDS[@]} nhóm sản phẩm..."
+    ba_kit_say updating_groups "${#GROUP_IDS[@]}"
     echo ""
   fi
 
@@ -2150,7 +2222,7 @@ cmd_update() {
     local -a gkeys
     IFS=',' read -r -a gkeys <<< "${GROUP_KEYS[$gi]}"
 
-    echo "Sản phẩm: ${alias} (${gid})"
+    ba_kit_say product_group "$alias" "$gid"
     for key in "${gkeys[@]}"; do
       local label
       label=$(runtime_label_for_key "$key")
@@ -2160,7 +2232,7 @@ cmd_update() {
 
     local repo="" purl="" vis="" prof="" idx
     idx=$(product_index_for_id "$gid" 2>/dev/null) || {
-      echo "Lỗi: Sản phẩm '$gid' không được hỗ trợ."
+      ba_kit_say unsupported_product_id "$gid"
       exit 1
     }
     select_product_index "$idx"
@@ -2173,17 +2245,17 @@ cmd_update() {
     if [ "$vis" = "private" ]; then
       require_private_github_access "$alias"
       if ! gh api "repos/${repo}" --jq '.private' &>/dev/null 2>&1; then
-        echo "Quyền truy cập ${alias} đã bị thu hồi."
+        ba_kit_say access_revoked "$alias"
         exit 1
       fi
     fi
 
     local latest
     latest=$(get_release_json "latest" | jq -r '.tag_name') || {
-      echo "Lỗi: Không thể kiểm tra phiên bản mới."
+      ba_kit_say latest_check_error
       exit 1
     }
-    echo "Phiên bản mới nhất: ${latest}"
+    ba_kit_say latest_version "$latest"
 
     local all_latest=true
     for key in "${gkeys[@]}"; do
@@ -2193,14 +2265,15 @@ cmd_update() {
       fi
     done
     if $all_latest && node "$RUNTIME_LIFECYCLE_HELPER" doctor --home "$HOME" --runtimes "$(IFS=,; echo "${gkeys[*]}")" >/dev/null 2>&1; then
-      echo "Đang dùng phiên bản mới nhất."
+      ba_kit_say already_latest
       echo ""
       continue
     fi
 
-    read -r -p "Cập nhật lên ${latest}? (Y/n): " confirm
+    ba_kit_message update_confirm "$latest"
+    read -r confirm
     if [ "$(lowercase "$confirm")" = "n" ]; then
-      echo "Đã hủy nhóm ${alias}."
+      ba_kit_say cancelled_group "$alias"
       echo ""
       continue
     fi
@@ -2212,7 +2285,7 @@ cmd_update() {
     extract_release
     install_preflight "${gkeys[@]}"
 
-    echo "Đang cập nhật files..."
+    ba_kit_say update_files
     for key in "${gkeys[@]}"; do
       local root label
       root=$(runtime_root_for_key "$key")
@@ -2248,7 +2321,7 @@ cmd_doctor() {
     node "$RUNTIME_LIFECYCLE_HELPER" doctor --home "$HOME" --runtimes "claude,codex,agy" || runtime_doctor_status=$?
   fi
   echo "=============================================="
-  echo "  BA-kit HEALTH CHECK"
+  ba_kit_say doctor_title
   echo "=============================================="
   echo ""
 
@@ -2267,7 +2340,7 @@ cmd_doctor() {
         if [ "$st" = "uninstalled-with-preserved-files" ]; then
           local preserved
           preserved=$(echo "$STATE_DATA" | jq '.files | length')
-          echo "[ĐÃ GỠ] ${label}: ${alias} ${STATE_VERSION} (còn ${preserved} file được giữ lại)"
+          ba_kit_say uninstalled_status "$label" "$alias" "$STATE_VERSION" "$preserved"
         else
           echo "[OK]   ${label}: ${alias} ${STATE_VERSION} (schema-${STATE_SOURCE#v}, ${st})"
           any_installed=true
@@ -2280,17 +2353,17 @@ cmd_doctor() {
         any_installed=true
         ;;
       recovery)
-        echo "[CẦN KHÔI PHỤC] ${label}: giao dịch trước đó chưa được khôi phục hoàn toàn"
+        ba_kit_say recovery_status "$label"
         any_installed=true
         ;;
       empty)
-        echo "[CHƯA] ${label}: chưa cài đặt"
+        ba_kit_say not_installed_status "$label"
         ;;
     esac
   done
 
   if ! $any_installed; then
-    echo "       Chạy: ba-kit install"
+    printf '       '; ba_kit_say run_install
   fi
 
   # jq and curl (always needed)
@@ -2299,34 +2372,34 @@ cmd_doctor() {
 
   # gh: only needed for private products
   if github_auth_available; then
-    echo "[OK]   GitHub CLI: đã đăng nhập (cho sản phẩm riêng tư)"
+    ba_kit_say github_signed_in
   else
-    echo "[OK]   GitHub CLI: chưa đăng nhập (Solo Basic vẫn dùng được)"
+    ba_kit_say github_signed_out
   fi
 
   echo ""
-  echo "Quyền truy cập:"
+  ba_kit_say access_title
   for i in "${!PRODUCT_IDS[@]}"; do
     local vid="${PRODUCT_IDS[$i]}"
     local vname="${PRODUCT_NAMES[$i]}"
     local vis="${PRODUCT_VISIBILITIES[$i]}"
     if [ "$vis" = "public" ]; then
-      echo "  [OK]   ${vname} — miễn phí, luôn có sẵn"
+      ba_kit_say access_free "$vname"
     elif github_auth_available; then
       local repo="${PRODUCT_REPOS[$i]}"
       if gh api "repos/${repo}" --jq '.private' &>/dev/null 2>&1; then
-        echo "  [OK]   ${vname} — có quyền truy cập"
+        ba_kit_say access_granted "$vname"
       else
-        echo "  [THIẾU] ${vname} — chưa có quyền"
+        ba_kit_say access_missing "$vname"
       fi
     else
-      echo "  [THIẾU] ${vname} — cần gh auth login"
+      ba_kit_say access_login "$vname"
     fi
   done
 
   # Components for installed runtimes
   echo ""
-  echo "Components đã cài:"
+  ba_kit_say components_title
   for key in "${RUNTIME_KEYS[@]}"; do
     resolve_runtime_state "$key" "read-only" || true
     runtime_state_is_active || continue
@@ -2345,7 +2418,7 @@ cmd_doctor() {
 
       if [ "$STATE_PROFILE" = "solo-basic" ]; then
         if [ -d "$root/core" ]; then echo "    Core:      ${root}/core/"; fi
-        echo "    Không có agents, hooks, scripts."
+        if [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ]; then echo "    No agents, hooks, or scripts."; else echo "    Không có agents, hooks, scripts."; fi
       elif [ "$STATE_PROFILE" = "standard" ]; then
         [ -d "$root/agents" ] && echo "    Agents:    $(ls -1 "$root/agents/" 2>/dev/null | wc -l | tr -d ' ') file"
         [ -d "$root/hooks" ] && echo "    Hooks:     $(ls -1 "$root/hooks/" 2>/dev/null | wc -l | tr -d ' ') file"
@@ -2355,7 +2428,9 @@ cmd_doctor() {
         fi
       fi
     else
-      [ -d "$root/skills" ] && echo "    Skills: $(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ') thư mục (legacy)"
+      if [ -d "$root/skills" ]; then
+        [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "    Skills: $(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ') directories (legacy)" || echo "    Skills: $(ls -1 "$root/skills/" 2>/dev/null | wc -l | tr -d ' ') thư mục (legacy)"
+      fi
     fi
   done
 
@@ -2379,7 +2454,7 @@ cmd_version() {
         if [ "${STATE_STATUS:-installed}" = "uninstalled-with-preserved-files" ]; then
           local preserved
           preserved=$(echo "$STATE_DATA" | jq '.files | length')
-          echo "  ${label}: ${alias}: đã gỡ (còn ${preserved} file được giữ lại)"
+          ba_kit_say version_uninstalled "$label" "$alias" "$preserved"
         else
           echo "  ${label}: ${alias} v${STATE_VERSION}"
         fi
@@ -2390,7 +2465,7 @@ cmd_version() {
         echo "  ${label}: ${alias} ${STATE_VERSION} (legacy)"
         ;;
       empty)
-        echo "  ${label}: (chưa cài)"
+        ba_kit_say version_missing "$label"
         ;;
     esac
   done
@@ -2409,8 +2484,8 @@ cmd_uninstall() {
         shift 2
         ;;
       *)
-        echo "Không hiểu tham số: $1"
-        echo "Dùng: ba-kit uninstall [--runtime claude,codex,agy]"
+        ba_kit_say unknown_argument "$1"
+        ba_kit_say uninstall_usage
         exit 1
         ;;
     esac
@@ -2430,16 +2505,16 @@ cmd_uninstall() {
   fi
 
   if [ ${#TARGET_RUNTIME_KEYS[@]} -eq 0 ]; then
-    echo "Không có runtime nào đã cài."
+    ba_kit_say no_installed_runtime
     exit 0
   fi
 
   echo ""
   echo "=============================================="
-  echo "  GỠ CÀI ĐẶT"
+  ba_kit_say uninstall_title
   echo "=============================================="
   echo ""
-  echo "Sẽ gỡ các runtime sau (có backup trước khi xóa):"
+  ba_kit_say uninstall_list
   for key in "${TARGET_RUNTIME_KEYS[@]}"; do
     local label root
     label=$(runtime_label_for_key "$key")
@@ -2451,9 +2526,10 @@ cmd_uninstall() {
   done
   echo ""
 
-  read -r -p "Bạn có chắc muốn tiếp tục? (y/N): " confirm
+  ba_kit_message uninstall_confirm
+  read -r confirm
   if [ "$(lowercase "$confirm")" != "y" ]; then
-    echo "Đã hủy."
+    ba_kit_say cancelled
     exit 0
   fi
 
@@ -2461,7 +2537,7 @@ cmd_uninstall() {
 
   if [ -f "$RUNTIME_LIFECYCLE_HELPER" ]; then
     node "$RUNTIME_LIFECYCLE_HELPER" uninstall --home "$HOME" --runtimes "$(IFS=,; echo "${TARGET_RUNTIME_KEYS[*]}")"
-    echo "Đã gỡ các runtime được chọn bằng transaction schema-v3."
+    ba_kit_say uninstall_done
     exit 0
   fi
 
