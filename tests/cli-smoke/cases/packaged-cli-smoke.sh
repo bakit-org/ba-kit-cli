@@ -116,6 +116,8 @@ fi
 # --- Test 5: smoke help command (stubbed, no real gh) ---
 echo "--- Test 5: packaged CLI help with stubs ---"
 SANDBOX=$(mktemp -d)
+# Keep preference reads inside the sandbox when CI exports XDG_CONFIG_HOME.
+export XDG_CONFIG_HOME="$SANDBOX/home/.config"
 trap "rm -rf $WORK_DIR $SANDBOX" EXIT
 
 mkdir -p "$SANDBOX/home/.claude/skills"
