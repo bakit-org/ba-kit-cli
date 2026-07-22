@@ -14,6 +14,13 @@ source "$SMOKE_DIR/lib/release-fixture.sh"
 PASS=0
 pass() { PASS=$((PASS + 1)); echo "  PASS: $*"; }
 die() { echo "  FAIL: $*" >&2; exit 1; }
+file_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
 cleanup() { rm -rf "$FIXTURE_DIR"; }
 trap cleanup EXIT
 
@@ -172,7 +179,7 @@ echo "--- Schema-v2 and legacy migration ---"
 new_case
 mkdir -p "$HOME_DIR/.claude/skills/ba-review" "$(dirname "$(state_file claude)")"
 printf '# schema2 old\n' > "$HOME_DIR/.claude/skills/ba-review/SKILL.md"
-OLD_HASH=$(shasum -a 256 "$HOME_DIR/.claude/skills/ba-review/SKILL.md" | awk '{print $1}')
+OLD_HASH=$(file_sha256 "$HOME_DIR/.claude/skills/ba-review/SKILL.md")
 jq -n --arg hash "$OLD_HASH" '{schema_version:2,product_id:"ba-kit",product_name:"BA-kit",profile:"standard",version:"1.3.0",status:"installed",files:{"./.claude/skills/ba-review/SKILL.md":{source_sha256:$hash}}}' > "$(state_file claude)"
 install_native claude
 [ "$(jq -r '.schema_version' "$(state_file claude)")" = 3 ] || die "schema-v2 state not migrated"
@@ -181,7 +188,7 @@ grep -q '^# review skill$' "$HOME_DIR/.claude/skills/ba-review/SKILL.md" || die 
 new_case
 mkdir -p "$HOME_DIR/.claude/skills/ba-review" "$HOME_DIR/.claude/ba-kit"
 printf '# legacy old\n' > "$HOME_DIR/.claude/skills/ba-review/SKILL.md"
-OLD_HASH=$(shasum -a 256 "$HOME_DIR/.claude/skills/ba-review/SKILL.md" | awk '{print $1}')
+OLD_HASH=$(file_sha256 "$HOME_DIR/.claude/skills/ba-review/SKILL.md")
 jq -n --arg hash "$OLD_HASH" '{"./.claude/skills/ba-review/SKILL.md":$hash}' > "$HOME_DIR/.claude/ba-kit/release-manifest.json"
 install_native claude
 [ "$(jq -r '.schema_version' "$(state_file claude)")" = 3 ] || die "legacy state not migrated"
