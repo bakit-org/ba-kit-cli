@@ -343,7 +343,8 @@ printf 'user modified managed Codex skill\n' > "$HOME_DIR/.codex/skills/ba-revie
 jq --arg root "$HOME_DIR/.codex" '(.hooks.PreToolUse) += [
   {"matcher":"Read|Glob","hooks":[{"type":"command","command":("bash \"" + $root + "/ba-kit/hooks/guardrail-context-preflight-guard-hook.sh\"")}]},
   {"matcher":"Write","hooks":[{"type":"command","command":"bash \"C:\\Users\\legacy\\.codex\\ba-kit\\hooks\\postwrite-guardrail.sh\""}]},
-  {"matcher":"Write","hooks":[{"type":"command","command":"bash \"/tmp/user-hooks/guardrail-user.sh\""}]},
+  {"matcher":"Write","hooks":[{"type":"command","command":"bash '\''C:\\Users\\legacy\\.codex\\ba-kit\\hooks\\guardrail-single-quote.sh'\''"}]},
+  {"matcher":"Write","hooks":[{"type":"command","command":"echo \"/ba-kit/hooks/not-managed.sh\" && bash \"/tmp/user-hooks/guardrail-user.sh\""}]},
   {"matcher":"Read","hooks":[{"type":"command","command":"echo nested-user-hook"}]}
 ]' "$HOME_DIR/.codex/hooks.json" > "$HOME_DIR/.codex/hooks.json.tmp"
 mv "$HOME_DIR/.codex/hooks.json.tmp" "$HOME_DIR/.codex/hooks.json"
@@ -356,8 +357,9 @@ grep -q 'user-model' "$HOME_DIR/.codex/config.toml" || die "uninstall removed Co
 ! grep -q 'BA-kit managed agents' "$HOME_DIR/.codex/config.toml" || die "uninstall retained Codex managed block"
 [ "$(jq -r '.owner' "$HOME_DIR/.codex/hooks.json")" = user ] || die "uninstall removed Codex hook config"
 [ ! -e "$HOME_DIR/.claude/ba-kit/preferences.json" ] && [ ! -e "$HOME_DIR/.codex/ba-kit/preferences.json" ] || die "uninstall retained runtime preference projection"
-! grep -q '/ba-kit/hooks/' "$HOME_DIR/.codex/hooks.json" || die "uninstall retained nested/direct Codex BA-kit hooks"
-! grep -Fq '\\ba-kit\\hooks\\' "$HOME_DIR/.codex/hooks.json" || die "uninstall retained Windows-style Codex BA-kit hooks"
+! grep -q 'guardrail-context-preflight-guard-hook.sh' "$HOME_DIR/.codex/hooks.json" || die "uninstall retained POSIX-style Codex BA-kit hook"
+! grep -q 'postwrite-guardrail.sh' "$HOME_DIR/.codex/hooks.json" || die "uninstall retained Windows-style Codex BA-kit hook"
+! grep -q 'guardrail-single-quote.sh' "$HOME_DIR/.codex/hooks.json" || die "uninstall retained single-quoted Codex BA-kit hook"
 grep -q 'guardrail-user.sh' "$HOME_DIR/.codex/hooks.json" || die "uninstall removed unrelated user guardrail hook"
 grep -q 'nested-user-hook' "$HOME_DIR/.codex/hooks.json" || die "uninstall removed nested Codex user hook"
 grep -q 'user modified' "$HOME_DIR/.claude/skills/ba-review/SKILL.md" || die "uninstall removed modified managed file"
