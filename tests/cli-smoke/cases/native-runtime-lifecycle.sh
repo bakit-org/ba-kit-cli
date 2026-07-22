@@ -271,10 +271,28 @@ if install_native claude >/dev/null 2>&1; then die "malformed recovery journal a
 new_case
 mkdir -p "$HOME_DIR/.claude/ba-kit"
 printf 'DO-NOT-CHANGE\n' > "$HOME_DIR/metadata-sentinel"
-ln -s "$HOME_DIR/metadata-sentinel" "$HOME_DIR/.claude/ba-kit/VERSION"
-if install_native claude >/dev/null 2>&1; then die "symlinked runtime metadata was accepted"; fi
-grep -q '^DO-NOT-CHANGE$' "$HOME_DIR/metadata-sentinel" || die "runtime metadata symlink overwrote user file"
-[ -L "$HOME_DIR/.claude/ba-kit/VERSION" ] || die "failed metadata install mutated user symlink"
+set +e
+node - "$HOME_DIR/metadata-sentinel" "$HOME_DIR/.claude/ba-kit/VERSION" <<'NODE'
+const fs = require('fs');
+try {
+  fs.symlinkSync(process.argv[2], process.argv[3], 'file');
+  process.exit(fs.lstatSync(process.argv[3]).isSymbolicLink() ? 0 : 2);
+} catch (error) {
+  if (process.platform === 'win32' && ['EPERM', 'EACCES'].includes(error.code)) process.exit(77);
+  throw error;
+}
+NODE
+SYMLINK_RC=$?
+set -e
+if [ "$SYMLINK_RC" -eq 77 ]; then
+  echo "  SKIP: native symlink privilege unavailable"
+elif [ "$SYMLINK_RC" -ne 0 ]; then
+  die "failed to create real metadata symlink"
+else
+  if install_native claude >/dev/null 2>&1; then die "symlinked runtime metadata was accepted"; fi
+  grep -q '^DO-NOT-CHANGE$' "$HOME_DIR/metadata-sentinel" || die "runtime metadata symlink overwrote user file"
+  [ -L "$HOME_DIR/.claude/ba-kit/VERSION" ] || die "failed metadata install mutated user symlink"
+fi
 pass "malformed inputs fail closed"
 
 echo "--- Doctor failure modes ---"
