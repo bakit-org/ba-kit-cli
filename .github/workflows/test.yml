@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: bash -n ba-kit
+      - run: bash -n bakit
 
   syntax-js:
     runs-on: ubuntu-latest
@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node -c bin/ba-kit.js
+      - run: node -c bin/bakit.js
       - run: node -c lib/archive-helper.js
       - run: node -c tests/check-version-contract.js
 

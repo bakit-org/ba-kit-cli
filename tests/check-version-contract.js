@@ -18,7 +18,7 @@ const path = require('path');
 
 const REPO = path.resolve(__dirname, '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
-const CLI_SCRIPT = fs.readFileSync(path.join(REPO, 'ba-kit'), 'utf8');
+const CLI_SCRIPT = fs.readFileSync(path.join(REPO, 'bakit'), 'utf8');
 
 // Solo frozen minimum (from Phase 01)
 const SOLO_REPO = process.env.BA_KIT_SOLO_DIR
@@ -66,9 +66,9 @@ console.log(`  frozen Solo:   ${frozenVersion || 'NOT FOUND'}`);
 if (tagArg) console.log(`  tag:           ${normalise(tagArg)}`);
 
 if (!embeddedVersion) {
-  fail('CLI_VERSION not found in ba-kit script');
+  fail('CLI_VERSION not found in bakit script');
 } else {
-  pass('CLI_VERSION found in ba-kit script');
+  pass('CLI_VERSION found in bakit script');
 }
 
 if (!frozenVersion) {

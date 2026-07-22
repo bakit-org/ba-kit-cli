@@ -97,10 +97,16 @@ jq '(.hooks.PreToolUse[0].hooks) += [{"type":"command","command":"echo mixed-use
 mv "$CLAUDE_SETTINGS.tmp" "$CLAUDE_SETTINGS"
 for runtime in claude codex agy; do
   [ "$(jq -r '.schema_version' "$(state_file "$runtime")")" = 3 ] || die "$runtime state is not schema v3"
-  [ -f "$(jq -r '.targets[0]' "$(state_file "$runtime")")/ba-kit/RECOVERY_REQUIRED.json" ] || die "$runtime compatibility barrier missing"
+  BARRIER="$(jq -r '.targets[0]' "$(state_file "$runtime")")/ba-kit/RECOVERY_REQUIRED.json"
+  [ -f "$BARRIER" ] || die "$runtime compatibility barrier missing"
+  [ "$(jq -r '.min_cli_version' "$BARRIER")" = 2.0.0 ] || die "$runtime barrier requires wrong CLI version"
   [ "$(jq -r '.preferences.interaction_language' "$(state_file "$runtime")")" = vi ] || die "$runtime interaction preference missing from state"
   [ "$(jq -r '.interaction_language' "$(jq -r '.targets[0]' "$(state_file "$runtime")")/ba-kit/preferences.json")" = vi ] || die "$runtime preference projection missing"
 done
+EN_UPGRADE_GUIDANCE=$(BA_KIT_INTERACTION_LANGUAGE=en bash -c 'source "$1"; ba_kit_message cli_upgrade Claude' -- "$CLI_REPO/lib/cli-localization.sh")
+VI_UPGRADE_GUIDANCE=$(BA_KIT_INTERACTION_LANGUAGE=vi bash -c 'source "$1"; ba_kit_message cli_upgrade Claude' -- "$CLI_REPO/lib/cli-localization.sh")
+printf '%s' "$EN_UPGRADE_GUIDANCE" | grep -q 'CLI >= 2.0.0' || die "English recovery guidance disagrees with barrier"
+printf '%s' "$VI_UPGRADE_GUIDANCE" | grep -q 'CLI >= 2.0.0' || die "Vietnamese recovery guidance disagrees with barrier"
 [ -f "$HOME_DIR/.claude/agents/ba-reviewer.md" ] || die "Claude native agent missing"
 [ -f "$HOME_DIR/.codex/agents/ba-reviewer.toml" ] || die "Codex native agent missing"
 [ -f "$HOME_DIR/.gemini/antigravity/knowledge/ba-kit-workflow/metadata.json" ] || die "Antigravity Knowledge Item missing"
@@ -367,12 +373,12 @@ grep -q 'user modified' "$HOME_DIR/.claude/skills/ba-review/SKILL.md" || die "un
 [ "$(grep -c 'user modified managed Codex skill' "$HOME_DIR/.codex/skills/ba-review/SKILL.md")" = 1 ] || die "uninstall removed modified Codex skill"
 [ "$(jq -r '.status' "$(state_file claude)")" = uninstalled-with-preserved-files ] || die "uninstall tombstone missing"
 [ "$(jq -r '.status' "$(state_file codex)")" = uninstalled-with-preserved-files ] || die "Codex uninstall tombstone missing"
-VERSION_OUTPUT=$(HOME="$HOME_DIR" bash "$CLI_REPO/ba-kit" version)
+VERSION_OUTPUT=$(HOME="$HOME_DIR" bash "$CLI_REPO/bakit" version)
 printf '%s' "$VERSION_OUTPUT" | grep -q 'đã gỡ' || die "version reports uninstall tombstone as installed"
-UNINSTALL_OUTPUT=$(HOME="$HOME_DIR" bash "$CLI_REPO/ba-kit" uninstall)
+UNINSTALL_OUTPUT=$(HOME="$HOME_DIR" bash "$CLI_REPO/bakit" uninstall)
 printf '%s' "$UNINSTALL_OUTPUT" | grep -q 'Không có runtime' || die "unscoped uninstall reselected tombstones"
 set +e
-UPDATE_OUTPUT=$(HOME="$HOME_DIR" bash "$CLI_REPO/ba-kit" update 2>&1)
+UPDATE_OUTPUT=$(HOME="$HOME_DIR" bash "$CLI_REPO/bakit" update 2>&1)
 UPDATE_RC=$?
 set -e
 [ "$UPDATE_RC" -ne 0 ] && printf '%s' "$UPDATE_OUTPUT" | grep -q 'chưa được cài' || die "update reselected uninstall tombstones"

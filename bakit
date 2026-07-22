@@ -86,9 +86,9 @@ PRODUCT_URLS=(
 # Synced from package.json by `npm version` (see scripts/sync-cli-version.js)
 # — do not hand-edit. Duplicated rather than read at runtime because this
 # script also ships standalone via GitHub release tarball with no adjacent
-# package.json (npm global installs, npx, and symlinked ~/.local/bin/ba-kit
+# package.json (npm global installs, npx, and symlinked ~/.local/bin/bakit
 # all resolve differently too).
-CLI_VERSION="1.4.7"
+CLI_VERSION="2.0.0"
 
 RUNTIME_KEYS=("claude" "codex" "agy")
 RUNTIME_LABELS=("Claude Code" "Codex CLI" "Antigravity IDE")
@@ -304,23 +304,23 @@ main() {
 usage_commands() {
       ba_kit_say commands
       if [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ]; then
-        echo "  ba-kit install                     Install BA-kit"
-        echo "  ba-kit install --version X         Install a specific version (for example: v1.2.0)"
-        echo "  ba-kit install --runtime <list>    Select runtimes: claude,codex,agy (default: claude)"
-        echo "  ba-kit update                      Update every installed runtime"
-        echo "  ba-kit doctor                      Check installation health"
-        echo "  ba-kit version                     Show CLI and runtime versions"
-        echo "  ba-kit uninstall                   Uninstall with backup"
-        echo "  ba-kit uninstall --runtime <list>  Uninstall selected runtimes"
+        echo "  bakit install                     Install BA-kit"
+        echo "  bakit install --version X         Install a specific version (for example: v1.2.0)"
+        echo "  bakit install --runtime <list>    Select runtimes: claude,codex,agy (default: claude)"
+        echo "  bakit update                      Update every installed runtime"
+        echo "  bakit doctor                      Check installation health"
+        echo "  bakit version                     Show CLI and runtime versions"
+        echo "  bakit uninstall                   Uninstall with backup"
+        echo "  bakit uninstall --runtime <list>  Uninstall selected runtimes"
       else
-        echo "  ba-kit install                     Cài đặt BA-kit lần đầu"
-        echo "  ba-kit install --version X         Cài version cụ thể (vd: v1.2.0)"
-        echo "  ba-kit install --runtime <list>    Chọn runtime: claude,codex,agy (mặc định: claude)"
-        echo "  ba-kit update                      Cập nhật lên phiên bản mới nhất (mọi runtime đã cài)"
-        echo "  ba-kit doctor                      Kiểm tra trạng thái cài đặt"
-        echo "  ba-kit version                     Hiển thị phiên bản CLI + từng runtime đã cài"
-        echo "  ba-kit uninstall                   Gỡ cài đặt (có backup)"
-        echo "  ba-kit uninstall --runtime <list>  Chỉ gỡ runtime chỉ định (mặc định: tự phát hiện tất cả)"
+        echo "  bakit install                     Cài đặt BA-kit lần đầu"
+        echo "  bakit install --version X         Cài version cụ thể (vd: v1.2.0)"
+        echo "  bakit install --runtime <list>    Chọn runtime: claude,codex,agy (mặc định: claude)"
+        echo "  bakit update                      Cập nhật lên phiên bản mới nhất (mọi runtime đã cài)"
+        echo "  bakit doctor                      Kiểm tra trạng thái cài đặt"
+        echo "  bakit version                     Hiển thị phiên bản CLI + từng runtime đã cài"
+        echo "  bakit uninstall                   Gỡ cài đặt (có backup)"
+        echo "  bakit uninstall --runtime <list>  Chỉ gỡ runtime chỉ định (mặc định: tự phát hiện tất cả)"
       fi
       echo ""
       ba_kit_say supported_runtimes
@@ -792,10 +792,10 @@ check_cross_product_for_runtime() {
     echo ""
     ba_kit_say cannot_overwrite "$existing_product"
     echo ""
-    echo "  ba-kit uninstall --runtime ${key}"
+    echo "  bakit uninstall --runtime ${key}"
     echo ""
     ba_kit_say then_rerun
-    echo "  ba-kit install --runtime ${key}"
+    echo "  bakit install --runtime ${key}"
     echo "=============================================="
     exit 1
   fi
@@ -1494,10 +1494,10 @@ show_result() {
     ba_kit_say get_started_command
     echo ""
     ba_kit_say update_later
-    echo "    ba-kit update"
+    echo "    bakit update"
     echo ""
       ba_kit_say health_check
-    echo "    ba-kit doctor"
+    echo "    bakit doctor"
   else
     echo ""
     ba_kit_say get_started
@@ -1505,10 +1505,10 @@ show_result() {
     ba_kit_say get_started_command
     echo ""
     ba_kit_say update_later
-    echo "    ba-kit update"
+    echo "    bakit update"
     echo ""
     ba_kit_say health_check
-    echo "    ba-kit doctor"
+    echo "    bakit doctor"
   fi
   echo "=============================================="
 }
@@ -1915,7 +1915,7 @@ post_install() {
 }
 
 # ============================================================
-# COMMAND: ba-kit install
+# COMMAND: bakit install
 # ============================================================
 cmd_install() {
   local target_version="latest"
@@ -2165,7 +2165,7 @@ commit_canonical_state() {
 }
 
 # ============================================================
-# COMMAND: ba-kit update
+# COMMAND: bakit update
 # ============================================================
 cmd_update() {
   echo ""
@@ -2311,7 +2311,7 @@ cmd_update() {
 }
 
 # ============================================================
-# COMMAND: ba-kit doctor
+# COMMAND: bakit doctor
 # ============================================================
 cmd_doctor() {
   echo ""
@@ -2439,7 +2439,7 @@ cmd_doctor() {
 }
 
 # ============================================================
-# COMMAND: ba-kit version
+# COMMAND: bakit version
 # ============================================================
 cmd_version() {
   echo "BA-kit CLI: v${CLI_VERSION}"
@@ -2472,7 +2472,7 @@ cmd_version() {
 }
 
 # ============================================================
-# COMMAND: ba-kit uninstall
+# COMMAND: bakit uninstall
 # ============================================================
 cmd_uninstall() {
   local target_runtime=""
@@ -2640,7 +2640,7 @@ cmd_uninstall() {
     clean_hooks_json
   fi
 
-  echo "Để cài lại: npm install -g @bakit-org/cli && ba-kit install"
+  echo "Để cài lại: npm install -g @bakit-org/cli && bakit install"
 }
 
 # ============================================================

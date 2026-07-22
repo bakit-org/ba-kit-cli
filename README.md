@@ -5,19 +5,19 @@ Supported customer installer for BA-kit on Claude Code, Codex CLI, and Antigravi
 ## Install
 
 ```bash
-npm install -g @bakit-org/cli@^1.4.0
-ba-kit install
-ba-kit doctor
+npm install -g @bakit-org/cli@^2.0.0
+bakit install
+bakit doctor
 ```
 
-CLI 1.4.0 supports BA-kit runtime payload schema 2 and maintains canonical schema-v3 state. Omit `--runtime` to install Claude Code only; select one or more runtimes explicitly when needed:
+CLI 2.0.0 supports BA-kit runtime payload schema 2 and maintains canonical schema-v3 state. Omit `--runtime` to install Claude Code only; select one or more runtimes explicitly when needed:
 
 ```bash
-ba-kit install --runtime claude,codex,agy
-ba-kit update
-ba-kit doctor
-ba-kit version
-ba-kit uninstall --runtime codex,agy
+bakit install --runtime claude,codex,agy
+bakit update
+bakit doctor
+bakit version
+bakit uninstall --runtime codex,agy
 ```
 
 There is no `--product` flag. Product selection is access-driven:
@@ -66,21 +66,21 @@ Canonical state is stored at:
 
 Schema-v3 state records the payload schema, product/profile/version, runtime targets, registrations, interaction-language projections, managed hashes, and preserved-file status. Legacy and schema-v2 installs migrate forward during install/update.
 
-Install, update, and uninstall are transactional across selected runtimes. Journals live under `~/.local/share/ba-kit/transactions/`; an interrupted transaction is recovered before a later mutation. Malformed journals or state fail closed. `ba-kit doctor` is read-only and reports the recovery issue.
+Install, update, and uninstall are transactional across selected runtimes. Journals live under `~/.local/share/ba-kit/transactions/`; an interrupted transaction is recovered before a later mutation. Malformed journals or state fail closed. `bakit doctor` is read-only and reports the recovery issue.
 
-Files are removed or replaced only while their hashes still match BA-kit-managed content. User-modified and retired files are preserved as `preserved-modified`. Uninstall may leave an `uninstalled-with-preserved-files` tombstone so a later reinstall does not misclassify those files; `ba-kit version` and `doctor` report that state as uninstalled, not active. Codex hook cleanup handles both direct and nested hook entries while preserving user-owned hooks.
+Files are removed or replaced only while their hashes still match BA-kit-managed content. User-modified and retired files are preserved as `preserved-modified`. Uninstall may leave an `uninstalled-with-preserved-files` tombstone so a later reinstall does not misclassify those files; `bakit version` and `bakit doctor` report that state as uninstalled, not active. Codex hook cleanup handles both direct and nested hook entries while preserving user-owned hooks.
 
 Runtime assets and metadata files are checked against approved runtime roots after realpath resolution. Symlinked parents/files that escape those roots fail closed before mutation.
 
 `RECOVERY_REQUIRED.json` prevents an older CLI from mutating a schema-v3 installation. Do not delete the barrier. Upgrade the npm CLI and run:
 
 ```bash
-ba-kit doctor
-ba-kit update
-ba-kit doctor
+bakit doctor
+bakit update
+bakit doctor
 ```
 
-Doctor checks schema-v3 state, managed path containment and hashes, transaction health, native Reviewer/orchestration capabilities, and Claude/Codex registrations. Repair uses `ba-kit update` after any malformed external configuration is corrected.
+Doctor checks schema-v3 state, managed path containment and hashes, transaction health, native Reviewer/orchestration capabilities, and Claude/Codex registrations. Repair uses `bakit update` after any malformed external configuration is corrected.
 
 ## Trust Boundary
 
@@ -88,7 +88,7 @@ The CLI validates the release manifest, runtime component contract, and extracte
 
 ## Release Compatibility
 
-BA-kit archives with `runtime_payload_schema: 2` require CLI 1.4.0 or newer. Release order is CLI first, then the BA-kit archive. npm publishing, Git tags, GitHub Releases, and rollout require explicit maintainer authorization.
+BA-kit archives with `runtime_payload_schema: 2` require CLI 2.0.0 or newer. Release order is CLI first, then the BA-kit archive. npm publishing, Git tags, GitHub Releases, and rollout require explicit maintainer authorization.
 
 Never downgrade schema-v3 state in place. If a release must be rolled back, use transaction recovery or a forward CLI/BA-kit patch and keep project artifacts plus review receipts unchanged.
 
@@ -97,15 +97,15 @@ Never downgrade schema-v3 state in place. If a release must be rolled back, use 
 ### Public Solo Basic
 
 ```bash
-npm install -g @bakit-org/cli@^1.4.0
-ba-kit install
-ba-kit doctor
+npm install -g @bakit-org/cli@^2.0.0
+bakit install
+bakit doctor
 ```
 
 ### Private Products
 
 1. Accept the product's GitHub organization invitation.
 2. Install and authenticate GitHub CLI with `gh auth login`.
-3. Install `@bakit-org/cli` 1.4.0 or newer.
-4. Run `ba-kit install --runtime <runtime-list>`.
-5. Run `ba-kit doctor` before starting `/ba-start` or `/ba-do`.
+3. Install `@bakit-org/cli` 2.0.0 or newer.
+4. Run `bakit install --runtime <runtime-list>`.
+5. Run `bakit doctor` before starting `/ba-start` or `/ba-do`.

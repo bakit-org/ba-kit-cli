@@ -1,13 +1,13 @@
 {
   "name": "@bakit-org/cli",
-  "version": "1.4.7",
+  "version": "2.0.0",
   "description": "BA-kit CLI — AI-powered Business Analyst toolkit for Claude Code",
   "bin": {
-    "ba-kit": "./bin/ba-kit.js"
+    "bakit": "./bin/bakit.js"
   },
   "files": [
-    "ba-kit",
-    "bin/ba-kit.js",
+    "bakit",
+    "bin/bakit.js",
     "lib/archive-helper.js",
     "lib/cli-localization.sh",
     "lib/interaction-language-config.js",
@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "postinstall": "node postinstall.js",
-    "version": "node scripts/sync-cli-version.js && git add ba-kit",
+    "version": "node scripts/sync-cli-version.js && git add bakit",
     "test": "node tests/check-version-contract.js && node --test tests/archive-helper.test.js && bash tests/cli-smoke/run-all.sh"
   },
   "keywords": [

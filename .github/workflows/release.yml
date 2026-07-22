@@ -19,8 +19,8 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
-      - run: bash -n ba-kit
-      - run: node -c bin/ba-kit.js
+      - run: bash -n bakit
+      - run: node -c bin/bakit.js
       - run: node -c lib/archive-helper.js
       - run: node --test tests/archive-helper.test.js
       - run: node tests/check-version-contract.js --tag "${{ github.ref_name }}"
@@ -32,20 +32,24 @@ jobs:
           TARBALL=$(npm pack --json | jq -r '.[0].filename')
           echo "Tarball: $TARBALL"
           # Check required files present
-          tar -tzf "$TARBALL" | grep -q 'package/ba-kit$' || { echo "MISSING: ba-kit"; exit 1; }
-          tar -tzf "$TARBALL" | grep -q 'package/bin/ba-kit.js$' || { echo "MISSING: bin/ba-kit.js"; exit 1; }
+          tar -tzf "$TARBALL" | grep -q 'package/bakit$' || { echo "MISSING: bakit"; exit 1; }
+          tar -tzf "$TARBALL" | grep -q 'package/bin/bakit.js$' || { echo "MISSING: bin/bakit.js"; exit 1; }
           tar -tzf "$TARBALL" | grep -q 'package/lib/archive-helper.js$' || { echo "MISSING: lib/archive-helper.js"; exit 1; }
           # Check forbidden files absent
           tar -tzf "$TARBALL" | grep -q 'package/.env' && { echo "FORBIDDEN: .env in package"; exit 1; } || true
           tar -tzf "$TARBALL" | grep -q 'package/node_modules/' && { echo "FORBIDDEN: node_modules in package"; exit 1; } || true
+          tar -tzf "$TARBALL" | grep -q 'package/ba-kit$' && { echo "FORBIDDEN: ba-kit"; exit 1; } || true
+          tar -tzf "$TARBALL" | grep -q 'package/bin/ba-kit.js$' && { echo "FORBIDDEN: bin/ba-kit.js"; exit 1; } || true
           echo "Package contents verified"
       - name: Install tarball in disposable prefix
         run: |
           TARBALL=$(ls *.tgz | head -1)
           PREFIX=$(mktemp -d)
-          npm install --prefix "$PREFIX" "$(pwd)/$TARBALL"
-          "$PREFIX/node_modules/.bin/ba-kit" help
-          "$PREFIX/node_modules/.bin/ba-kit" version
+          npm install --global --prefix "$PREFIX" "$(pwd)/$TARBALL"
+          test -x "$PREFIX/bin/bakit"
+          test ! -e "$PREFIX/bin/ba-kit"
+          "$PREFIX/bin/bakit" help
+          "$PREFIX/bin/bakit" version
           rm -rf "$PREFIX"
       - run: npm audit --omit=dev
 
@@ -58,7 +62,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: softprops/action-gh-release@v2
         with:
-          files: ba-kit
+          files: bakit
           generate_release_notes: true
 
   publish-npm:

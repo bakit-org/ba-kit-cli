@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { readPreference } = require('../lib/interaction-language-config');
 
-const SCRIPT = path.join(__dirname, '..', 'ba-kit');
+const SCRIPT = path.join(__dirname, '..', 'bakit');
 
 // Git for Windows' default installer only adds its `cmd\` dir to PATH, not
 // `bin\` (where bash.exe lives) — so `where bash` misses even a correctly

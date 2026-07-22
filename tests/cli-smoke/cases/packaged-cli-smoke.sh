@@ -47,7 +47,7 @@ echo "--- Test 1: package contains required files ---"
 PACKED_FILES=$(tar -tzf "$TARBALL_PATH" 2>/dev/null | sed 's|^package/||' | grep -v '^$' | grep -v '^package$' | sort)
 
 for required in \
-  "ba-kit" "bin/ba-kit.js" "lib/archive-helper.js" \
+  "bakit" "bin/bakit.js" "lib/archive-helper.js" \
   "lib/cli-localization.sh" "lib/interaction-language-config.js" \
   "lib/runtime-component-contract.js" "lib/runtime-lifecycle.js" \
   "lib/runtime-registration.js" "README.md" "package.json"; do
@@ -59,7 +59,7 @@ for required in \
 done
 
 # Must NOT contain .env, node_modules, tests
-for forbidden in ".env" "node_modules/" "tests/"; do
+for forbidden in ".env" "node_modules/" "tests/" "ba-kit" "bin/ba-kit.js"; do
   if echo "$PACKED_FILES" | grep -qF "$forbidden"; then
     fail "package contains forbidden: $forbidden"
   else
@@ -69,10 +69,10 @@ done
 
 # --- Test 2: extract and verify dispatcher ---
 echo "--- Test 2: dispatcher can locate bash ---"
-if [ ! -f "$EXTRACTED/bin/ba-kit.js" ]; then
+if [ ! -f "$EXTRACTED/bin/bakit.js" ]; then
   fail "dispatcher not found in extracted package"
 else
-  OUTPUT=$(node -e "require(process.argv[1])" "$EXTRACTED/bin/ba-kit.js" 2>&1) && RC=0 || RC=$?
+  OUTPUT=$(node -e "require(process.argv[1])" "$EXTRACTED/bin/bakit.js" 2>&1) && RC=0 || RC=$?
   if [ "$RC" -eq 0 ]; then
     pass "dispatcher loads without error"
   else
@@ -102,19 +102,19 @@ fi
 
 # --- Test 4: bash script syntax ---
 echo "--- Test 4: bash script syntax valid ---"
-if [ ! -f "$EXTRACTED/ba-kit" ]; then
-  fail "ba-kit script not found in package"
+if [ ! -f "$EXTRACTED/bakit" ]; then
+  fail "bakit script not found in package"
 else
-  bash -n "$EXTRACTED/ba-kit" 2>&1 && RC=0 || RC=$?
+  bash -n "$EXTRACTED/bakit" 2>&1 && RC=0 || RC=$?
   if [ "$RC" -eq 0 ]; then
-    pass "ba-kit script syntax valid"
+    pass "bakit script syntax valid"
   else
-    fail "ba-kit script has syntax errors"
+    fail "bakit script has syntax errors"
   fi
 fi
 
-# --- Test 5: smoke help command (stubbed, no real gh) ---
-echo "--- Test 5: packaged CLI help with stubs ---"
+# --- Test 5: disposable global npm install exposes only bakit ---
+echo "--- Test 5: disposable global npm install exposes only bakit ---"
 SANDBOX=$(mktemp -d)
 # Keep preference reads inside the sandbox when CI exports XDG_CONFIG_HOME.
 export XDG_CONFIG_HOME="$SANDBOX/home/.config"
@@ -137,16 +137,61 @@ echo '{"auth":{"status":"logged-out"}}'
 STUB
 chmod +x "$SANDBOX/bin/gh"
 
-HELP_OUTPUT=$(HOME="$SANDBOX/home" PATH="$SANDBOX/bin:$PATH" BA_KIT_TESTING=1 bash "$EXTRACTED/ba-kit" help 2>&1) || true
+INSTALL_PREFIX="$SANDBOX/npm-prefix"
+INSTALL_HOME="$SANDBOX/install-home"
+INSTALL_LOG="$SANDBOX/npm-install.log"
+mkdir -p "$INSTALL_HOME/.local/bin"
+for user_file in bakit bakit.cmd bakit.ps1; do
+  printf 'user-owned-%s\n' "$user_file" > "$INSTALL_HOME/.local/bin/$user_file"
+done
+
+HOME="$INSTALL_HOME" npm install --foreground-scripts --global --prefix "$INSTALL_PREFIX" "$TARBALL_PATH" >"$INSTALL_LOG" 2>&1 && RC=0 || RC=$?
+if [ "$RC" -ne 0 ]; then
+  fail "disposable global npm install failed"
+elif [ ! -x "$INSTALL_PREFIX/bin/bakit" ]; then
+  fail "global npm did not create the bakit executable"
+elif [ -e "$INSTALL_PREFIX/bin/ba-kit" ]; then
+  fail "global npm created forbidden legacy ba-kit executable"
+else
+  pass "global npm exposes only the bakit executable"
+fi
+
+if grep -q 'PATH CONFLICT DETECTED' "$INSTALL_LOG" && grep -q 'Preserved existing user-owned file' "$INSTALL_LOG"; then
+  pass "postinstall warns about user-owned command conflicts"
+else
+  fail "postinstall did not emit an actionable conflict warning: $(cat "$INSTALL_LOG")"
+fi
+
+for user_file in bakit bakit.cmd bakit.ps1; do
+  if [ "$(cat "$INSTALL_HOME/.local/bin/$user_file")" = "user-owned-$user_file" ]; then
+    pass "postinstall preserves user-owned $user_file"
+  else
+    fail "postinstall modified user-owned $user_file"
+  fi
+done
+
+HELP_OUTPUT=$(HOME="$SANDBOX/home" PATH="$SANDBOX/bin:$PATH" BA_KIT_TESTING=1 "$INSTALL_PREFIX/bin/bakit" help 2>&1) || true
 if echo "$HELP_OUTPUT" | grep -qE 'install|update|doctor|version|uninstall'; then
-  pass "packaged CLI help shows commands"
+  if echo "$HELP_OUTPUT" | grep -q 'ba-kit install'; then
+    fail "packaged CLI help still shows legacy ba-kit command: $HELP_OUTPUT"
+  else
+    pass "packaged bakit help shows manager commands"
+  fi
 else
   fail "packaged CLI help missing commands: $HELP_OUTPUT"
 fi
 
+for stale_command in install update doctor version uninstall; do
+  if "$INSTALL_PREFIX/bin/ba-kit" "$stale_command" >/dev/null 2>&1; then
+    fail "legacy ba-kit unexpectedly accepted $stale_command"
+  else
+    pass "legacy ba-kit rejects $stale_command"
+  fi
+done
+
 # --- Test 6: version command ---
 echo "--- Test 6: packaged CLI version ---"
-VER_OUTPUT=$(HOME="$SANDBOX/home" PATH="$SANDBOX/bin:$PATH" BA_KIT_TESTING=1 bash "$EXTRACTED/ba-kit" version 2>&1) || true
+VER_OUTPUT=$(HOME="$SANDBOX/home" PATH="$SANDBOX/bin:$PATH" BA_KIT_TESTING=1 "$INSTALL_PREFIX/bin/bakit" version 2>&1) || true
 if echo "$VER_OUTPUT" | grep -q "BA-kit CLI"; then
   pass "packaged CLI version works"
 else
@@ -155,7 +200,7 @@ fi
 
 mkdir -p "$SANDBOX/home/.config/ba-kit"
 printf '{"schema_version":1,"interaction_language":"en"}\n' > "$SANDBOX/home/.config/ba-kit/config.json"
-HELP_OUTPUT=$(HOME="$SANDBOX/home" PATH="$SANDBOX/bin:$PATH" BA_KIT_TESTING=1 bash "$EXTRACTED/ba-kit" help 2>&1) || true
+HELP_OUTPUT=$(HOME="$SANDBOX/home" PATH="$SANDBOX/bin:$PATH" BA_KIT_TESTING=1 "$INSTALL_PREFIX/bin/bakit" help 2>&1) || true
 if echo "$HELP_OUTPUT" | grep -q "Supported runtimes"; then
   pass "packaged CLI loads persisted English preference"
 else
@@ -166,7 +211,7 @@ rm -rf "$SANDBOX"
 
 # --- Test 7: CLI_VERSION matches package.json ---
 echo "--- Test 7: CLI_VERSION matches package.json ---"
-CLI_VERSION=$(grep '^CLI_VERSION=' "$EXTRACTED/ba-kit" | head -1 | sed 's/CLI_VERSION="\([^"]*\)".*/\1/')
+CLI_VERSION=$(grep '^CLI_VERSION=' "$EXTRACTED/bakit" | head -1 | sed 's/CLI_VERSION="\([^"]*\)".*/\1/')
 PKG_VERSION=$(node -e "console.log(require(process.argv[1]).version)" "$EXTRACTED/package.json")
 
 if [ "$CLI_VERSION" = "$PKG_VERSION" ]; then

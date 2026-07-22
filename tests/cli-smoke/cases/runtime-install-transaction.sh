@@ -6,7 +6,7 @@ SMOKE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SMOKE_DIR/lib/sandbox.sh"
 source "$SMOKE_DIR/lib/release-fixture.sh"
 
-CLI="$SMOKE_DIR/../../ba-kit"
+CLI="$SMOKE_DIR/../../bakit"
 STUB_DIR="$SMOKE_DIR/stubs"
 
 PASS=0; FAIL=0
