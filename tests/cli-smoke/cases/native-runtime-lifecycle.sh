@@ -239,8 +239,12 @@ refresh_release_manifest
 install_native claude
 [ ! -e "$HOME_DIR/.claude/templates/retire-clean.md" ] || die "unmodified retired file not removed"
 grep -q 'user changed' "$HOME_DIR/.claude/templates/retire-modified.md" || die "modified retired file not preserved"
-MOD_DEST="$HOME_DIR/.claude/templates/retire-modified.md"
-[ "$(jq -r --arg dest "$MOD_DEST" '.files["./.claude/templates/retire-modified.md"].destinations[$dest].status' "$(state_file claude)")" = preserved-retired ] || die "retired modified status missing"
+MOD_STATUS=$(jq -r '
+  .files["./.claude/templates/retire-modified.md"].destinations
+  | select(length == 1)
+  | to_entries[0].value.status
+' "$(state_file claude)")
+[ "$MOD_STATUS" = preserved-retired ] || die "retired modified status missing"
 pass "retirement preserves modified and removes unchanged"
 
 echo "--- Malformed config, state, and journal containment ---"
