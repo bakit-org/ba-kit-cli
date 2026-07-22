@@ -114,7 +114,11 @@ chmod 777 "$XDG_CONFIG_HOME/ba-kit"
 node "$SMOKE_DIR/../../lib/interaction-language-config.js" write --home "$HOME" --language en
 CONFIG_MODE=$(node -e 'console.log((require("fs").statSync(process.argv[1]).mode & 0o777).toString(8))' "$XDG_CONFIG_HOME/ba-kit/config.json")
 CONFIG_DIR_MODE=$(node -e 'console.log((require("fs").statSync(process.argv[1]).mode & 0o777).toString(8))' "$XDG_CONFIG_HOME/ba-kit")
-if [ "$(jq -r '.interaction_language' "$XDG_CONFIG_HOME/ba-kit/config.json")" = en ] && [ "$CONFIG_MODE" = 600 ] && [ "$CONFIG_DIR_MODE" = 700 ] && [ ! -e "$HOME/.config/ba-kit/config.json" ]; then pass; else fail "XDG config path or permissions not respected"; fi
+PERMISSIONS_OK=false
+if [ "${BA_KIT_WINDOWS:-0}" = 1 ] || { [ "$CONFIG_MODE" = 600 ] && [ "$CONFIG_DIR_MODE" = 700 ]; }; then
+  PERMISSIONS_OK=true
+fi
+if [ "$(jq -r '.interaction_language' "$XDG_CONFIG_HOME/ba-kit/config.json")" = en ] && [ "$PERMISSIONS_OK" = true ] && [ ! -e "$HOME/.config/ba-kit/config.json" ]; then pass; else fail "XDG config path or permissions not respected"; fi
 sandbox_teardown
 
 # Test 12: no public --language flag

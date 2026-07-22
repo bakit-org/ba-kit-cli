@@ -17,7 +17,9 @@ die() { echo "  FAIL: $*" >&2; exit 1; }
 cleanup() { rm -rf "$FIXTURE_DIR"; }
 trap cleanup EXIT
 
+CALLER_CWD="$(pwd -P)"
 generate_native_standard_fixture >/dev/null
+[ "$(pwd -P)" = "$CALLER_CWD" ] || die "native fixture changed or removed caller working directory"
 ARCHIVE="$FIXTURE_DIR/ba-kit-native-v1.4.0.tar.gz"
 
 INSPECT_OUTPUT=$(node "$CLI_REPO/lib/archive-helper.js" inspect \

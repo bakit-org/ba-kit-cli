@@ -219,6 +219,8 @@ JSON
 }
 MANIFEST
 
+  local archive="$FIXTURE_DIR/ba-kit-native-v1.4.0.tar.gz"
+  (
   cd "$work"
   {
     echo "{"
@@ -233,8 +235,8 @@ MANIFEST
     echo "}"
   } > release-manifest.json
 
-  local archive="$FIXTURE_DIR/ba-kit-native-v1.4.0.tar.gz"
   COPYFILE_DISABLE=1 tar -czf "$archive" .
+  )
   shasum -a 256 "$archive" 2>/dev/null | awk '{print $1}' > "${archive}.sha256" || \
     sha256sum "$archive" | awk '{print $1}' > "${archive}.sha256"
 
