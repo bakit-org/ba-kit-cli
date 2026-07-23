@@ -67,7 +67,7 @@ ensure_interaction_language() {
 
 # === CONFIG ===
 INSTALL_DIR="$HOME/.claude"
-BACKUP_DIR="$INSTALL_DIR/backups"
+BACKUP_ROOT="$HOME/.local/share/ba-kit/backups"
 BIN_DIR="$HOME/.local/bin"
 VERSION_FILE="$INSTALL_DIR/ba-kit/VERSION"
 MANIFEST_FILE="$INSTALL_DIR/ba-kit/release-manifest.json"
@@ -88,7 +88,7 @@ PRODUCT_URLS=(
 # script also ships standalone via GitHub release tarball with no adjacent
 # package.json (npm global installs, npx, and symlinked ~/.local/bin/bakit
 # all resolve differently too).
-CLI_VERSION="2.0.0"
+CLI_VERSION="2.0.1"
 
 RUNTIME_KEYS=("claude" "codex" "agy")
 RUNTIME_LABELS=("Claude Code" "Codex CLI" "Antigravity IDE")
@@ -122,6 +122,20 @@ runtime_roots_for_key() {
   done
   $found || echo "$HOME/.gemini/antigravity"
 }
+runtime_uninstall_roots_for_key() {
+  local key="$1"
+  if [ "${STATE_SOURCE:-}" != "v3" ]; then
+    runtime_roots_for_key "$key"
+    return
+  fi
+  local owned_root candidate
+  while IFS= read -r owned_root; do
+    [ -n "$owned_root" ] || continue
+    while IFS= read -r candidate; do
+      [ "$owned_root" = "$candidate" ] && { echo "$candidate"; break; }
+    done < <(runtime_roots_for_key "$key")
+  done < <(echo "$STATE_DATA" | jq -r '.targets[]')
+}
 runtime_label_for_key() { local i; i=$(runtime_index_for_key "$1") && echo "${RUNTIME_LABELS[$i]}"; }
 runtime_scope_for_key() { local i; i=$(runtime_index_for_key "$1") && echo "${RUNTIME_SCOPES[$i]}"; }
 
@@ -129,12 +143,12 @@ runtime_version_file()  { echo "$(runtime_root_for_key "$1")/ba-kit/VERSION"; }
 runtime_product_file()  { echo "$(runtime_root_for_key "$1")/ba-kit/PRODUCT"; }
 runtime_manifest_file() { echo "$(runtime_root_for_key "$1")/ba-kit/release-manifest.json"; }
 runtime_backup_dir() {
-  local key="$1"
-  if [ "$key" = "claude" ]; then
-    echo "$BACKUP_DIR"
-  else
-    echo "$(runtime_root_for_key "$key")/ba-kit/backups"
+  local key="$1" target_root="${2:-}"
+  local backup_dir="$BACKUP_ROOT/$key"
+  if [ "$key" = "agy" ] && [ -n "$target_root" ]; then
+    backup_dir="$backup_dir/$(basename "$target_root")"
   fi
+  echo "$backup_dir"
 }
 
 # ============================================================
@@ -943,7 +957,16 @@ _copy_scoped() {
   local src="$1" dst="$2"
   local manifest="$src/ba-kit/release-manifest.json"
 
-  [ -e "$src/ba-kit" ] && { cp -R "$src/ba-kit" "$dst/" 2>/dev/null || true; }
+  if [ -d "$src/ba-kit" ]; then
+    mkdir -p "$dst/ba-kit"
+    local ba_kit_entry
+    while IFS= read -r -d '' ba_kit_entry; do
+      [ "$(basename "$ba_kit_entry")" = "backups" ] && continue
+      cp -R "$ba_kit_entry" "$dst/ba-kit/" 2>/dev/null || true
+    done < <(find "$src/ba-kit" -mindepth 1 -maxdepth 1 -print0)
+  elif [ -e "$src/ba-kit" ]; then
+    cp -R "$src/ba-kit" "$dst/" 2>/dev/null || true
+  fi
   [ -e "$src/core" ] && { cp -R "$src/core" "$dst/" 2>/dev/null || true; }
   [ -f "$src/settings.json" ] && { cp "$src/settings.json" "$dst/" 2>/dev/null || true; }
 
@@ -1005,6 +1028,30 @@ do_backup() {
     # ponytail: keep 5 most recent backups, delete older
     prune_backups "$backup_dir" "$keep"
   fi
+}
+
+backup_runtime_before_uninstall() {
+  local key="$1" target_root="$2" keep="${3:-5}"
+  local backup_dir backup_path state_file
+  local has_runtime_content=false
+
+  if [ -d "$target_root" ] && [ "$(ls -A "$target_root" 2>/dev/null)" ]; then
+    has_runtime_content=true
+  fi
+  state_file=$(state_file_for_runtime "$key")
+  if ! $has_runtime_content && [ ! -f "$state_file" ]; then
+    return 0
+  fi
+
+  backup_dir=$(runtime_backup_dir "$key" "$target_root")
+  backup_path="${backup_dir}/pre-uninstall-$(date +%Y-%m-%d-%H%M%S)"
+  mkdir -p "$backup_path"
+  ba_kit_say backup_start "$target_root"
+  echo "  ${backup_path}"
+  $has_runtime_content && _copy_safe "$target_root" "$backup_path"
+  [ -f "$state_file" ] && cp "$state_file" "$backup_path/state.json"
+  ba_kit_say backup_done
+  prune_backups "$backup_dir" "$keep"
 }
 
 prune_backups() {
@@ -1478,13 +1525,14 @@ show_result() {
       echo "  Skills:     ${skill_count}"
     fi
 
-    local backup_dir
-    backup_dir=$(runtime_backup_dir "$key")
-    local latest_backup
-    latest_backup=$(ls -1dt "$backup_dir"/*/ 2>/dev/null | head -1)
-    if [ -n "$latest_backup" ]; then
-      [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "  Previous backup: ${latest_backup}" || echo "  Backup cũ:  ${latest_backup}"
-    fi
+    local backup_dir latest_backup target_root
+    while IFS= read -r target_root; do
+      backup_dir=$(runtime_backup_dir "$key" "$target_root")
+      latest_backup=$(ls -1dt "$backup_dir"/*/ 2>/dev/null | head -1)
+      if [ -n "$latest_backup" ]; then
+        [ "$BA_KIT_INTERACTION_LANGUAGE" = "en" ] && echo "  Previous backup: ${latest_backup}" || echo "  Backup cũ:  ${latest_backup}"
+      fi
+    done < <(runtime_roots_for_key "$key")
   done
 
   if [ "$SELECTED_PROFILE" = "solo-basic" ]; then
@@ -1983,7 +2031,7 @@ cmd_install() {
     # Backup existing state before mutation
     local backup_dir target_root
     while IFS= read -r target_root; do
-      backup_dir="${target_root}/ba-kit/backups"
+      backup_dir=$(runtime_backup_dir "$key" "$target_root")
       if [ -d "$target_root" ] && [ "$(ls -A "$target_root" 2>/dev/null)" ]; then
         do_backup "$target_root" "$backup_dir"
       fi
@@ -2294,7 +2342,7 @@ cmd_update() {
       echo "-- ${label} (${root}) --"
       local backup_dir target_root
       while IFS= read -r target_root; do
-        backup_dir="${target_root}/ba-kit/backups"
+        backup_dir=$(runtime_backup_dir "$key" "$target_root")
         [ -d "$target_root" ] && [ "$(ls -A "$target_root" 2>/dev/null)" ] && do_backup "$target_root" "$backup_dir"
       done < <(runtime_roots_for_key "$key")
     done
@@ -2535,6 +2583,14 @@ cmd_uninstall() {
 
   echo ""
 
+  for key in "${TARGET_RUNTIME_KEYS[@]}"; do
+    local target_root
+    resolve_runtime_state "$key" "mutating" || { echo "Lỗi: không thể đọc trạng thái $(runtime_label_for_key "$key")."; exit 1; }
+    while IFS= read -r target_root; do
+      backup_runtime_before_uninstall "$key" "$target_root"
+    done < <(runtime_uninstall_roots_for_key "$key")
+  done
+
   if [ -f "$RUNTIME_LIFECYCLE_HELPER" ]; then
     node "$RUNTIME_LIFECYCLE_HELPER" uninstall --home "$HOME" --runtimes "$(IFS=,; echo "${TARGET_RUNTIME_KEYS[*]}")"
     ba_kit_say uninstall_done
@@ -2550,22 +2606,11 @@ cmd_uninstall() {
     local root label
     root=$(runtime_root_for_key "$key")
     label=$(runtime_label_for_key "$key")
-    local backup_dir backup_path
-    backup_dir=$(runtime_backup_dir "$key")
-    backup_path="${backup_dir}/pre-uninstall-$(date +%Y-%m-%d-%H%M%S)"
 
     resolve_runtime_state "$key" "mutating" || { echo "Lỗi: không thể đọc trạng thái ${label}."; exit 1; }
     echo "-- ${label} (${root}) --"
 
-    # Backup state + owned files
-    mkdir -p "$backup_path"
-      if [ "${STATE_SOURCE:-}" = "v3" ] || [ "${STATE_SOURCE:-}" = "v2" ]; then
-      local state_file mf
-      state_file=$(state_file_for_runtime "$key")
-      [ -f "$state_file" ] && cp "$state_file" "$backup_path/state.json"
-      mf=$(runtime_manifest_file "$key")
-      [ -f "$mf" ] && cp "$mf" "$backup_path/release-manifest.json"
-
+    if [ "${STATE_SOURCE:-}" = "v3" ] || [ "${STATE_SOURCE:-}" = "v2" ]; then
       # Delete only unchanged managed files
       local kept=0 deleted=0
       local file_keys

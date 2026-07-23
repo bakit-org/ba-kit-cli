@@ -17,6 +17,30 @@ case "${CURL_MODE:-ok}" in
       echo "STUB: ok"
     fi
     ;;
+  fixture-download)
+    if [ "${1:-}" = "--version" ]; then
+      echo "curl 8.0.0 (BA-kit fixture stub)"
+    elif echo "$*" | grep -Eq "releases/(latest|tags/)"; then
+      echo '{"tag_name":"v0.0.0","name":"v0.0.0","body":"test","assets":[{"name":"ba-kit-v0.0.0.tar.gz","browser_download_url":"https://github.com/bakit-org/ba-kit-solo/releases/download/v0.0.0/ba-kit-v0.0.0.tar.gz"},{"name":"ba-kit-v0.0.0.tar.gz.sha256","browser_download_url":"https://github.com/bakit-org/ba-kit-solo/releases/download/v0.0.0/ba-kit-v0.0.0.tar.gz.sha256"}]}'
+    else
+      output=""
+      previous=""
+      for argument in "$@"; do
+        if [ "$previous" = "-o" ]; then
+          output="$argument"
+          break
+        fi
+        previous="$argument"
+      done
+      [ -n "$output" ] || { echo "fixture-download requires curl -o" >&2; exit 1; }
+      [ -n "${CURL_FIXTURE_DIR:-}" ] || { echo "CURL_FIXTURE_DIR is required" >&2; exit 1; }
+      if echo "$*" | grep -q '\.sha256'; then
+        cp "$CURL_FIXTURE_DIR/ba-kit-v0.0.0.tar.gz.sha256" "$output"
+      else
+        cp "$CURL_FIXTURE_DIR/ba-kit-v0.0.0.tar.gz" "$output"
+      fi
+    fi
+    ;;
   api-fail)
     echo "$*" >> "$CURL_CALL_LOG"
     exit 22

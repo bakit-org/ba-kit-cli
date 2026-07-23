@@ -137,10 +137,10 @@ pass "fresh/reinstall claude+codex+agy"
 
 echo "--- Antigravity multi-home install ---"
 new_case
-mkdir -p "$HOME_DIR/.gemini/antigravity-cli"
+mkdir -p "$HOME_DIR/.gemini/antigravity-cli" "$HOME_DIR/.gemini/antigravity-ide"
 install_native agy
-[ "$(jq '.targets | length' "$(state_file agy)")" = 2 ] || die "canonical and detected Antigravity targets not consolidated"
-for target in antigravity antigravity-cli; do
+[ "$(jq '.targets | length' "$(state_file agy)")" = 3 ] || die "canonical and detected Antigravity targets not consolidated"
+for target in antigravity antigravity-cli antigravity-ide; do
   [ -f "$HOME_DIR/.gemini/$target/skills/ba-review/SKILL.md" ] || die "$target payload missing"
   [ -f "$HOME_DIR/.gemini/$target/ba-kit/state.json" ] || die "$target state projection missing"
   [ "$(jq -r '.interaction_language' "$HOME_DIR/.gemini/$target/ba-kit/preferences.json")" = vi ] || die "$target interaction preference missing"
@@ -149,7 +149,31 @@ grep -q '~/.gemini/antigravity/ba-kit/core/contract.yaml' "$HOME_DIR/.gemini/ant
 [ -f "$HOME_DIR/.gemini/antigravity/ba-kit/core/contract.yaml" ] || die "canonical Antigravity support contract missing"
 [ -f "$HOME_DIR/.gemini/antigravity/ba-kit/scripts/validate-review-receipt.py" ] || die "canonical Antigravity validator missing"
 [ "$(python3 "$HOME_DIR/.gemini/antigravity/ba-kit/scripts/validate-review-receipt.py")" = validator-ready ] || die "canonical Antigravity validator is not executable"
-pass "multi-home Antigravity targets"
+printf 'user modified Antigravity skill\n' > "$HOME_DIR/.gemini/antigravity-cli/skills/ba-review/SKILL.md"
+node "$LIFECYCLE" uninstall --home "$HOME_DIR" --runtimes agy
+grep -q '^user modified Antigravity skill$' "$HOME_DIR/.gemini/antigravity-cli/skills/ba-review/SKILL.md" || die "Antigravity uninstall removed modified CLI skill"
+for target in antigravity antigravity-cli antigravity-ide; do
+  [ ! -e "$HOME_DIR/.gemini/$target/ba-kit/state.json" ] || die "$target retained target state projection"
+  [ ! -e "$HOME_DIR/.gemini/$target/ba-kit/VERSION" ] || die "$target retained version metadata"
+  [ ! -e "$HOME_DIR/.gemini/$target/ba-kit/preferences.json" ] || die "$target retained preference projection"
+  [ ! -d "$HOME_DIR/.gemini/$target/ba-kit" ] || die "$target retained empty support directories"
+  [ -z "$(find "$HOME_DIR/.gemini/$target" -mindepth 1 -type d -empty -print -quit)" ] || die "$target retained empty managed directories"
+done
+[ ! -d "$HOME_DIR/.gemini/antigravity/skills" ] || die "canonical Antigravity target retained empty managed skills directories"
+[ ! -d "$HOME_DIR/.gemini/antigravity-ide/skills" ] || die "Antigravity IDE target retained empty managed skills directories"
+[ "$(jq -r '.status' "$(state_file agy)")" = uninstalled-with-preserved-files ] || die "Antigravity canonical tombstone missing"
+[ "$(jq '.files | length' "$(state_file agy)")" = 1 ] || die "Antigravity tombstone retained non-preserved files"
+[ "$(jq -r --arg dest "$HOME_DIR/.gemini/antigravity-cli/skills/ba-review/SKILL.md" '.files["./.antigravity/skills/ba-review/SKILL.md"].destinations[$dest].status' "$(state_file agy)")" = preserved-modified ] || die "Antigravity tombstone lost modified CLI skill"
+pass "multi-home Antigravity install and target-scoped uninstall"
+
+echo "--- Antigravity ignores newly detected unmanaged target ---"
+new_case
+install_native agy
+mkdir -p "$HOME_DIR/.gemini/antigravity-ide/ba-kit"
+printf 'USER-METADATA\n' > "$HOME_DIR/.gemini/antigravity-ide/ba-kit/VERSION"
+node "$LIFECYCLE" uninstall --home "$HOME_DIR" --runtimes agy
+grep -q '^USER-METADATA$' "$HOME_DIR/.gemini/antigravity-ide/ba-kit/VERSION" || die "Antigravity uninstall removed metadata from unmanaged target"
+pass "newly detected unmanaged Antigravity target preserved"
 
 echo "--- Interaction language projection lifecycle ---"
 new_case
@@ -301,6 +325,43 @@ else
 fi
 pass "malformed inputs fail closed"
 
+echo "--- Uninstall metadata containment ---"
+new_case
+install_native claude
+jq '
+  .files |= with_entries(
+    .value.destinations |= with_entries(select(.key | contains("/.claude/ba-kit/") | not))
+    | select(.value.destinations | length > 0)
+  )
+' "$(state_file claude)" > "$(state_file claude).tmp"
+mv "$(state_file claude).tmp" "$(state_file claude)"
+rm -rf "$HOME_DIR/.claude/ba-kit"
+mkdir -p "$HOME_DIR/outside-runtime-metadata"
+printf 'DO-NOT-DELETE\n' > "$HOME_DIR/outside-runtime-metadata/VERSION"
+set +e
+node - "$HOME_DIR/outside-runtime-metadata" "$HOME_DIR/.claude/ba-kit" <<'NODE'
+const fs = require('fs');
+try {
+  fs.symlinkSync(process.argv[2], process.argv[3], 'dir');
+  process.exit(fs.lstatSync(process.argv[3]).isSymbolicLink() ? 0 : 2);
+} catch (error) {
+  if (process.platform === 'win32' && ['EPERM', 'EACCES'].includes(error.code)) process.exit(77);
+  throw error;
+}
+NODE
+SYMLINK_RC=$?
+set -e
+if [ "$SYMLINK_RC" -eq 77 ]; then
+  echo "  SKIP: native symlink privilege unavailable"
+elif [ "$SYMLINK_RC" -ne 0 ]; then
+  die "failed to create runtime metadata directory symlink"
+else
+  if node "$LIFECYCLE" uninstall --home "$HOME_DIR" --runtimes claude >/dev/null 2>&1; then die "uninstall accepted escaped runtime metadata"; fi
+  grep -q '^DO-NOT-DELETE$' "$HOME_DIR/outside-runtime-metadata/VERSION" || die "uninstall deleted escaped metadata"
+  [ -L "$HOME_DIR/.claude/ba-kit" ] || die "failed uninstall mutated escaped metadata symlink"
+fi
+pass "uninstall metadata paths fail closed"
+
 echo "--- Doctor failure modes ---"
 new_case
 install_native claude
@@ -332,6 +393,9 @@ pass "doctor reports tamper and recovery failures"
 
 echo "--- Uninstall preserves user config and modified managed files ---"
 new_case
+mkdir -p "$EXTRACT_DIR/.local/bin"
+printf '#!/usr/bin/env bash\nprintf "fixture cli\\n"\n' > "$EXTRACT_DIR/.local/bin/ba-kit"
+refresh_release_manifest
 mkdir -p "$HOME_DIR/.claude" "$HOME_DIR/.codex"
 cat > "$HOME_DIR/.claude/settings.json" <<'JSON'
 {"theme":"dark","hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"echo user"}]}]}}
@@ -346,6 +410,25 @@ jq '(.hooks.PreToolUse[0].hooks) += [{"type":"command","command":"echo mixed-use
 mv "$HOME_DIR/.claude/settings.json.tmp" "$HOME_DIR/.claude/settings.json"
 printf 'user modified managed skill\n' > "$HOME_DIR/.claude/skills/ba-review/SKILL.md"
 printf 'user modified managed Codex skill\n' > "$HOME_DIR/.codex/skills/ba-review/SKILL.md"
+printf 'stale installer-owned cli\n' > "$HOME_DIR/.claude/ba-kit/ba-kit"
+mkdir -p "$HOME_DIR/.claude/skills/personal"
+printf 'user-owned skill with misleading state metadata\n' > "$HOME_DIR/.claude/skills/personal/SKILL.md"
+rm "$HOME_DIR/.claude/core"
+mkdir -p "$HOME_DIR/.claude/personal-core"
+ln -s "$HOME_DIR/.claude/personal-core" "$HOME_DIR/.claude/core"
+jq --arg dest "$HOME_DIR/.claude/skills/personal/SKILL.md" --arg hash "$(file_sha256 "$HOME_DIR/.claude/skills/personal/SKILL.md")" '
+  .files["./.local/bin/mislabeled-user-file"] = {
+    source_sha256: $hash,
+    component_id: "claude-cli",
+    destinations: {($dest): {
+      installed_sha256: $hash,
+      managed_sha256: "",
+      status: "preserved-modified",
+      registration_ownership: "ba-kit"
+    }}
+  }
+' "$(state_file claude)" > "$(state_file claude).tmp"
+mv "$(state_file claude).tmp" "$(state_file claude)"
 jq --arg root "$HOME_DIR/.codex" '(.hooks.PreToolUse) += [
   {"matcher":"Read|Glob","hooks":[{"type":"command","command":("bash \"" + $root + "/ba-kit/hooks/guardrail-context-preflight-guard-hook.sh\"")}]},
   {"matcher":"Write","hooks":[{"type":"command","command":"bash \"C:\\Users\\legacy\\.codex\\ba-kit\\hooks\\postwrite-guardrail.sh\""}]},
@@ -371,8 +454,38 @@ grep -q 'nested-user-hook' "$HOME_DIR/.codex/hooks.json" || die "uninstall remov
 grep -q 'user modified' "$HOME_DIR/.claude/skills/ba-review/SKILL.md" || die "uninstall removed modified managed file"
 [ ! -e "$HOME_DIR/.codex/templates/frd.md" ] || die "uninstall retained unchanged managed file"
 [ "$(grep -c 'user modified managed Codex skill' "$HOME_DIR/.codex/skills/ba-review/SKILL.md")" = 1 ] || die "uninstall removed modified Codex skill"
+[ "$(cat "$HOME_DIR/.claude/skills/personal/SKILL.md")" = "user-owned skill with misleading state metadata" ] || die "uninstall trusted mislabeled replaceable-component state"
+[ -L "$HOME_DIR/.claude/core" ] && [ "$(readlink "$HOME_DIR/.claude/core")" = "$HOME_DIR/.claude/personal-core" ] || die "uninstall removed user-owned Claude core symlink"
+[ ! -e "$HOME_DIR/.claude/ba-kit/ba-kit" ] || die "uninstall retained stale installer-owned CLI"
+[ ! -e "$HOME_DIR/.claude/ba-kit/state.json" ] || die "uninstall retained Claude target state projection"
+[ ! -e "$HOME_DIR/.claude/ba-kit/VERSION" ] || die "uninstall retained Claude version metadata"
+[ ! -e "$HOME_DIR/.claude/ba-kit/PRODUCT" ] || die "uninstall retained Claude product metadata"
+[ ! -e "$HOME_DIR/.claude/ba-kit/PRODUCT_ID" ] || die "uninstall retained Claude product ID metadata"
+[ ! -e "$HOME_DIR/.claude/ba-kit/release-manifest.json" ] || die "uninstall retained Claude release manifest"
+[ ! -e "$HOME_DIR/.claude/ba-kit/RECOVERY_REQUIRED.json" ] || die "uninstall retained Claude compatibility barrier"
+[ ! -d "$HOME_DIR/.claude/ba-kit" ] || die "uninstall retained empty Claude support directories"
 [ "$(jq -r '.status' "$(state_file claude)")" = uninstalled-with-preserved-files ] || die "uninstall tombstone missing"
 [ "$(jq -r '.status' "$(state_file codex)")" = uninstalled-with-preserved-files ] || die "Codex uninstall tombstone missing"
+[ "$(jq '.files | has("./.local/bin/ba-kit")' "$(state_file claude)")" = false ] || die "canonical tombstone retained installer-owned CLI"
+[ "$(jq '[.files[] | select(.component_id == "claude-skills")] | length' "$(state_file claude)")" = 1 ] || die "canonical tombstone lost modified Claude skill"
+[ "$(jq -r --arg dest "$HOME_DIR/.claude/skills/personal/SKILL.md" '.files["./.local/bin/mislabeled-user-file"].destinations[$dest].status' "$(state_file claude)")" = preserved-modified ] || die "canonical tombstone lost mislabeled user file"
+mkdir -p "$HOME_DIR/.claude/ba-kit"
+printf 'stale installer-owned cli\n' > "$HOME_DIR/.claude/ba-kit/ba-kit"
+STALE_CLI_HASH=$(file_sha256 "$HOME_DIR/.claude/ba-kit/ba-kit")
+DESIRED_CLI_HASH=$(file_sha256 "$EXTRACT_DIR/.local/bin/ba-kit")
+jq --arg dest "$HOME_DIR/.claude/ba-kit/ba-kit" --arg stale "$STALE_CLI_HASH" --arg desired "$DESIRED_CLI_HASH" '
+  .files["./.local/bin/ba-kit"] = {
+    source_sha256: $desired,
+    component_id: "claude-cli",
+    destinations: {($dest): {
+      installed_sha256: $stale,
+      managed_sha256: "",
+      status: "preserved-modified",
+      registration_ownership: "ba-kit"
+    }}
+  }
+' "$(state_file claude)" > "$(state_file claude).tmp"
+mv "$(state_file claude).tmp" "$(state_file claude)"
 VERSION_OUTPUT=$(HOME="$HOME_DIR" bash "$CLI_REPO/bakit" version)
 printf '%s' "$VERSION_OUTPUT" | grep -q 'đã gỡ' || die "version reports uninstall tombstone as installed"
 UNINSTALL_OUTPUT=$(HOME="$HOME_DIR" bash "$CLI_REPO/bakit" uninstall)
@@ -384,6 +497,18 @@ set -e
 [ "$UPDATE_RC" -ne 0 ] && printf '%s' "$UPDATE_OUTPUT" | grep -q 'chưa được cài' || die "update reselected uninstall tombstones"
 DOCTOR_OUTPUT=$(node "$LIFECYCLE" doctor --home "$HOME_DIR" --runtimes claude,codex 2>&1) || die "doctor failed on uninstall tombstones: $DOCTOR_OUTPUT"
 [ "$(printf '%s' "$DOCTOR_OUTPUT" | grep -c '\[UNINSTALLED\]')" -eq 2 ] || die "doctor did not classify uninstall tombstones"
-pass "uninstall registration cleanup and config preservation"
+install_native claude
+grep -q '^#!/usr/bin/env bash$' "$HOME_DIR/.claude/ba-kit/ba-kit" || die "reinstall did not restore desired installer-owned CLI"
+grep -q '^user modified managed skill$' "$HOME_DIR/.claude/skills/ba-review/SKILL.md" || die "reinstall overwrote modified Claude skill"
+[ "$(jq -r '.status' "$(state_file claude)")" = installed ] || die "reinstall did not reactivate Claude runtime"
+[ "$(jq -r '.files["./.local/bin/ba-kit"].component_id' "$(state_file claude)")" = claude-cli ] || die "reinstall did not refresh installer-owned component metadata"
+[ "$(jq -r '.files["./.local/bin/ba-kit"].source_sha256' "$(state_file claude)")" = "$DESIRED_CLI_HASH" ] || die "reinstall retained stale internal CLI source metadata"
+[ "$(jq -r --arg dest "$HOME_DIR/.claude/ba-kit/ba-kit" '.files["./.local/bin/ba-kit"].destinations[$dest].status' "$(state_file claude)")" = managed ] || die "reinstall did not manage restored internal CLI"
+[ "$(jq -r --arg dest "$HOME_DIR/.claude/skills/ba-review/SKILL.md" '.files["./.claude/skills/ba-review/SKILL.md"].destinations[$dest].status' "$(state_file claude)")" = preserved-modified ] || die "reinstall did not preserve modified skill status"
+[ -f "$HOME_DIR/.claude/ba-kit/state.json" ] || die "reinstall did not recreate target state projection"
+[ -f "$HOME_DIR/.claude/ba-kit/VERSION" ] || die "reinstall did not recreate release metadata"
+[ -f "$HOME_DIR/.claude/ba-kit/RECOVERY_REQUIRED.json" ] || die "reinstall did not recreate compatibility barrier"
+[ -f "$HOME_DIR/.claude/ba-kit/preferences.json" ] || die "reinstall did not recreate preference projection"
+pass "uninstall tombstone cleanup and ownership-aware reinstall"
 
 echo "=== Native Runtime Lifecycle Results: $PASS passed ==="

@@ -70,6 +70,10 @@ Install, update, and uninstall are transactional across selected runtimes. Journ
 
 Files are removed or replaced only while their hashes still match BA-kit-managed content. User-modified and retired files are preserved as `preserved-modified`. Uninstall may leave an `uninstalled-with-preserved-files` tombstone so a later reinstall does not misclassify those files; `bakit version` and `bakit doctor` report that state as uninstalled, not active. Codex hook cleanup handles both direct and nested hook entries while preserving user-owned hooks.
 
+The installer-owned Claude helper at `~/.claude/ba-kit/ba-kit` is replaceable managed content, not a user-editable artifact. Install and reinstall refresh it from the verified release even when older state incorrectly classified it as preserved. Genuine modifications to skills, templates, rules, hooks, or core content remain protected.
+
+Uninstall tombstones live only in canonical state under `~/.local/share/ba-kit/runtime-state/`; runtime projections, release metadata, compatibility barriers, preferences, and replaceable helpers are removed. New user-visible backups are stored outside runtime trees at `~/.local/share/ba-kit/backups/{runtime}/`, preventing snapshots from recursively copying their own backup history. Existing legacy backups below runtime directories are left untouched.
+
 Runtime assets and metadata files are checked against approved runtime roots after realpath resolution. Symlinked parents/files that escape those roots fail closed before mutation.
 
 `RECOVERY_REQUIRED.json` prevents an older CLI from mutating a schema-v3 installation. Do not delete the barrier. Upgrade the npm CLI and run:
